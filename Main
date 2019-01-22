@@ -1,0 +1,3317 @@
+## Update InContact monthly data in Repeats folder
+## Backup Latitude data: https://sunrun.my.salesforce.com/00O0d000005Cyhw/e?retURL=%2F00O%3Ffcf%3D00B0d0000077o6m%26rolodexIndex%3D-1%26page%3D1
+## R-Studio theme == "Idle Fingers"
+
+#load("C:/Users/eric.reschke/Desktop/R/Main/R/CurrentImport.RData")
+
+Last_RunDate <- as.Date("2019-01-22"); ## update this prior to running script to today's date
+
+## Search for and apply when using for rep/cm scorecards
+CurrentScorecard_Dates <- function(s) {
+  filter(s,s$ActivityCreatedOnDate>="2019-01-01" & s$ActivityCreatedOnDate<="2019-01-20")
+}
+
+CurrentScorecard_CaseDates <- function(s) {
+  filter(s,s$CreatedDate>="2019-01-01" & s$CreatedDate<="2019-01-20")
+}
+
+## Function for duplicate subsetting ----------------
+findDup <- function(x) {
+  duplicated(x) | duplicated(x, fromLast = TRUE)
+}
+
+## Setup  ----------------------------------
+
+project <- "orion-datahub"
+
+library(dplyr,warn.conflicts = FALSE)
+library(ggplot2,warn.conflicts = FALSE)
+library(forcats,warn.conflicts = FALSE)
+library(tidyr,warn.conflicts = FALSE)
+library(plotly,warn.conflicts = FALSE)
+library(zoo,warn.conflicts = FALSE)
+library(lubridate,warn.conflicts = FALSE)
+require(stringr)
+library(bigrquery,warn.conflicts = FALSE)
+library(shiny,warn.conflicts = FALSE)
+library(shinydashboard,warn.conflicts = FALSE)
+library(googledrive,warn.conflicts = FALSE)
+library(googleVis,warn.conflicts = FALSE)
+
+setwd("C:/Users/eric.reschke/Desktop/R/MAIN/R")
+
+CurrentMonth <- as.Date("2019-01-01")
+PreviousMonth <- as.Date("2018-12-01")
+
+Stopping_Date <- Sys.Date()-1
+Thirty_Days <- as.Date(Stopping_Date - 30)
+Sixty_Days <- as.Date(Thirty_Days - 30)
+Twenty_Days <- as.Date(Stopping_Date-20)
+Ten_Days <- as.Date(Twenty_Days+10)
+
+DocStart <- CurrentMonth #start of the month
+DocEnd <- Stopping_Date #point to stop
+
+## Opportunity Object  ----------------
+
+sql_Oppty <- "
+SELECT
+Id AS OppyID,
+Welcome_Call__c AS WelcomeCallDate,
+Welcome_Call_Status__c AS WelcomeCallStatus,
+Sales_Rep_Division__c AS SalesRepDivision,
+OwnerId AS OwnerId,
+Created_Date__c AS CreatedDate
+
+FROM
+SOPS.SFDC_OPPORTUNITY_V
+
+WHERE
+CreatedDate > '2019-01-17'
+"
+
+rawOpptyInc <- query_exec(sql_Oppty, project = project, quiet=FALSE,
+                       use_legacy_sql = FALSE,
+                       max_pages = Inf)
+
+rawOpptyInc <- rawOpptyInc %>%
+  subset(CreatedDate<Last_RunDate)
+
+rawOppty <- rbind(rawOppty,rawOpptyInc)
+
+Oppty_df1 <- rawOppty
+
+
+
+## CA_CountyCodes  ----------------------------------
+raw_CA_CountyCodes <- read.csv("C:/Users/eric.reschke/Desktop/R/Repeats/raw/CA_CountyCodes.csv",
+                               stringsAsFactors = FALSE,
+                               header=TRUE)
+
+
+## Latitude from Account table --------------------------------
+
+sql_Latitude <- "
+SELECT
+FromLatitude__c AS Latitude,
+FromLongitude__c AS Longitude,
+Id AS AccountId
+
+FROM 
+SOPS.SFDC_ACCOUNT_V
+"
+
+rawLatitude <- query_exec(sql_Latitude, project = project, quiet=FALSE,
+                          use_legacy_sql = FALSE,
+                          max_pages = Inf)
+
+
+
+
+## Cases ----------------------------------
+
+## Last refresh==01/22/2019
+
+sql_Cases <- "
+SELECT
+Id AS CaseID,
+CaseNumber AS CaseNumber,
+Service_Contract__c AS ContractID,
+RecordTypeId AS CaseRecordTypeId,
+CreatedDate AS CreatedDate,
+ClosedDate AS ClosedDate,
+CreatedById AS CreatedById,
+OwnerId AS OwnerId,
+Status AS CaseStatus,
+Subject AS CaseSubject,
+Reason AS CaseReason,
+Subset_Reasons__c AS SubsetReason,
+Delinquency_Bucket__c AS DelinquencyBucket,
+Description AS Description,
+Total_Amount_Due__c AS TotalAmountDue,
+Compensated__c AS Compensated,
+LastModifiedDate AS LastModifiedDate,
+LastModifiedById AS LastModifiedById
+
+FROM 
+SOPS.SFDC_CASE_V
+
+WHERE
+CreatedDate > '2019-01-17'
+"
+
+rawCasesInc <- query_exec(sql_Cases, project = project, quiet=FALSE,
+                       use_legacy_sql = FALSE,
+                       max_pages = Inf)
+
+rawCasesInc <- rawCasesInc %>%
+  subset(CreatedDate<Last_RunDate)
+
+rawCases <- rbind(rawCases,rawCasesInc)
+
+
+
+## Fleet/SCs ----------------------------------
+
+sql_SC <- "
+SELECT 
+Id AS ContractID,
+Name AS ContractName,
+Agreement_Number__c AS AgreementNumber,
+Opportunity__c AS OpportunityID,
+AccountId AS AccountId,
+PTO__c AS PTODate,
+Install_Partner__c AS InstallPartner,
+Install_Branch__c AS InstallBranch,
+Status AS ContractStatus,
+Utility_Company__c AS Utility,
+PV_ES__c AS BrightBox,
+Billing_Method__c AS BillingMethod,
+Customer_Name__c AS CustomerName,
+Customer_Phone__c AS PhoneNumber,
+Mailing_Address__c AS MailingAddress,
+County__c AS County,
+City__c AS City,
+State__c AS State,
+Zip__c AS ZipCode,
+Retail_Purchase_Thru_Location__c AS PurchaseThru,
+System_Size_CEC_AC__c,
+System_Size_DC__c,
+Install_Date__c AS InstallDate,
+System_Activation_Date__c AS ActivationDate,
+Status__c AS Status,
+Opportunity_Sales_Reprsentative__c AS OpportunitySalesRepresentative
+
+FROM 
+SOPS.SFDC_SERVICE_CONTRACT_V
+"
+
+rawSC <- query_exec(sql_SC, project = project, quiet=FALSE,
+                 use_legacy_sql = FALSE,
+                 max_pages = Inf)
+
+SC_df1 <- rawSC %>%
+  arrange(PTODate)
+
+SC_df1 <- left_join(SC_df1,rawLatitude,by="AccountId")
+
+Fleet_Growth <- SC_df1 %>%
+  subset(!is.na(PTODate)) %>%
+  mutate(PTO.Month = as.Date(as.yearmon(PTODate))) %>%
+  group_by(PTO.Month) %>%
+  summarize(Fleet.Growth = n()) %>%
+  ungroup() %>%
+  mutate(Cumulative = cumsum(Fleet.Growth))
+
+Fleet_ByDistance <- rawSC %>%
+  subset(!is.na(PTODate)) %>%
+  mutate(PTODate = as.Date(PTODate)) %>%
+  select(c("PTODate","InstallPartner")) %>%
+  mutate(PTO.Under.100 = as.Date(PTODate+100)) %>%
+  mutate(PTO.Between = as.Date(PTODate+365)) 
+
+
+## SFDC User Table --------------------------------
+## User IDs to Names
+
+sql_Users <- "
+SELECT
+Id AS Id,
+Name AS FullName,
+FirstName AS FirstName,
+LastName AS LastName,
+Department AS Department,
+Title AS Title,
+Hire_Date__c AS HireDate,
+Position_Start_Date__c AS PositionStart,
+Termination_Date__c AS TermDate,
+ManagerId AS ManagerID
+
+FROM 
+SOPS.SFDC_USER_V
+"
+
+rawUsers <- query_exec(sql_Users, project = project, quiet=FALSE,
+                            use_legacy_sql = FALSE,
+                            max_pages = Inf)
+
+rawManagers <- rawUsers %>%
+  group_by(ManagerID) %>%
+  summarize(n=n()) %>%
+  mutate(n=NULL) %>%
+  ungroup() 
+
+rawUsers$FullName[rawUsers$FullName=="Cecilia Mira Pasillas"] <- "Cecilia Pasillas"
+rawUsers$LastName[rawUsers$LastName=="Mira Pasillas"] <- "Pasillas"
+rawUsers$FullName[rawUsers$FullName=="Joshua Gosey"] <- "Josh Gosey"
+
+rawManagers <- left_join(rawManagers,rawUsers,by=c("ManagerID"="Id"))
+  
+rawManagers <- rawManagers %>%
+  select(c("ManagerID","FullName")) %>%
+  mutate(ManagerName = FullName) %>%
+  mutate(FullName = NULL)
+
+rawUsers <- left_join(rawUsers,rawManagers,by="ManagerID")
+
+rawUser_IDsOnly <- rawUsers %>%
+  select(c("Id","FullName"))
+
+##
+
+CareReps <- rawUsers %>%
+  subset(Department=="Customer Care - 1110")
+
+CareManagers <- CareReps %>%
+  group_by(ManagerID) %>%
+  summarize(n=n()) %>%
+  mutate(n=NULL) %>%
+  ungroup() 
+
+CareManagers <- left_join(CareManagers,CareReps,by=c("ManagerID"="Id"))
+
+CareManagers <- CareManagers %>%
+  select(c("ManagerID","FullName")) %>%
+  mutate(ManagerName = FullName) %>%
+  mutate(FullName = NULL)
+
+CareReps <- left_join(CareReps,CareManagers,by=c("ManagerID","ManagerName"))
+
+CareReps <- CareReps %>%
+  subset(is.na(TermDate)) %>%
+  subset(!is.na(HireDate)) %>%
+  filter(grepl("Pollard",ManagerName) |
+           grepl("Dickman",ManagerName) |
+                   grepl("Carter",ManagerName) |
+                           grepl("Wilkerson",ManagerName))
+
+
+
+## InContact Table in GCP --------------------------------
+
+sql_InContact <- "
+SELECT *
+
+FROM 
+SOPS.INC_CDR_DISPOSITION_V
+
+WHERE
+Start_Date > ('2019-01-17')
+"
+
+rawInContactInc <- query_exec(sql_InContact, project = project, quiet=FALSE,
+                          use_legacy_sql = FALSE,
+                          max_pages = Inf)
+
+##rawInContact <- rbind(rawInContact,rawInContactInc)
+
+##rawInContact <- rawInContact %>%
+##  subset(Start_Date<Last_RunDate)
+
+##InContact_df1 <- rawInContact
+
+## Tasks --------------------------------
+
+sql_Tasks <- "
+SELECT
+Id AS ActivityId,
+Caller_ID__c AS ActivityANI,
+inContact_Contact_ID__c AS InContactContactID,
+WhatId AS RelatedTo,
+OwnerId AS ActivityCreatedBy,
+ActivityDate AS DueDate,
+CreatedById AS CreatedBy,
+Skill_Name__c AS IVRSkill,
+WhoId AS WhoId,
+CreatedDate AS ActivityCreatedTime,
+CallDurationInSeconds AS CallDuration,
+CallType AS CallType,
+Activity_Channel__c	AS ActivityChannel,
+Activity_Reason__c AS ActivityReason,
+Activity_Subset_Reason__c	AS ActivitySubset,
+Description AS ActivityNotes,
+RecordTypeId AS ActivityRecordTypeId,
+Related_To_Id__c AS RelatedToField
+
+FROM 
+SOPS.SFDC_TASK_V
+
+WHERE
+inContact_Contact_ID__c IS NOT NULL AND
+CreatedDate > '2019-01-17'
+"
+
+rawActivitiesInc <- query_exec(sql_Tasks, project = project, quiet=FALSE,
+                            use_legacy_sql = FALSE,
+                            max_pages = Inf)
+
+rawActivitiesInc <- rawActivitiesInc %>%
+  subset(ActivityCreatedTime<Last_RunDate)
+
+rawActivities <- rbind(rawActivities,rawActivitiesInc)
+
+
+
+
+## Initiate --------------------------------
+
+Cases_df1 <- rawCases
+
+Cases_df1 <- left_join(Cases_df1,rawUser_IDsOnly,by=c("CreatedById"="Id"))
+
+Cases_df1 <- Cases_df1%>%
+  mutate(Case.Created.By = FullName) %>%
+  mutate(FullName=NULL)
+
+Cases_df1 <- Cases_df1 %>%
+  mutate(Case.Record.Type = if_else(is.na(CaseRecordTypeId),"Other",
+                                    if_else(CaseRecordTypeId=="01260000000UGoaAAG","Standard",
+                                            if_else(CaseRecordTypeId=="012320000001G5EAAU","At Risk Customer",
+                                                    if_else(CaseRecordTypeId=="01260000000UGuiAAG","Field Service","Other")))))
+
+Activities_df1 <- rawActivities %>%
+  mutate(ActivityTime = format(strptime(ActivityCreatedTime,
+                                               "%Y-%m-%d %H:%M:%S"),"%H%M")) %>%
+  mutate(ActivityTime = as.numeric(ActivityTime)) %>%
+  mutate(ActivityCreatedOnDate = format(strptime(ActivityCreatedTime,
+                                               "%Y-%m-%d %H:%M:%S"),"%Y-%m-%d")) %>%
+  mutate(ActivityCreatedOnDate = as.Date(ActivityCreatedOnDate)) %>%
+  subset(ActivityCreatedOnDate<=Stopping_Date) %>%
+  arrange(InContactContactID,ActivityCreatedTime) %>%
+  mutate(D.IN = if_else(duplicated(InContactContactID,fromLast = TRUE),1,0)) 
+
+Activities_df1 <- Activities_df1 %>%
+  subset(!is.na(IVRSkill)) %>%
+  subset(ActivityANI!="8442900584") %>%
+  subset(IVRSkill!="OB Advisor") %>%
+  subset(IVRSkill!="Lead Attempts 2-3") %>% 
+  subset(IVRSkill!="Lead Attempts 1 API") %>% 
+  subset(IVRSkill!="Lead Attempts 11-17") %>% 
+  subset(IVRSkill!="Opty Database Team") %>% 
+  subset(IVRSkill!="AutoAttendant") %>% 
+  subset(IVRSkill!="AutoAttendant_CC_Tier3") %>%
+  subset(IVRSkill!="AutoAttendant_Collections") %>%
+  subset(IVRSkill!="AutoAttendant_ServiceTransfers") %>%
+  subset(IVRSkill!="Tier 1 Outbound") %>%
+  subset(IVRSkill!="Tier 3 Outbound") %>%
+  subset(IVRSkill!="Collections Outbound") %>%
+  subset(IVRSkill!="Service Transfer Outbound") %>%
+  subset(IVRSkill!="Tier 2 Outbound") %>%
+  subset(IVRSkill!="Agent Xfer Tier 2") %>%
+  subset(IVRSkill!="Collections 1-30") %>%
+  subset(IVRSkill!="Collections 31-60") %>%
+  subset(IVRSkill!="Collections 61-90") %>%
+  subset(IVRSkill!="Collections 91-120") %>%
+  subset(IVRSkill!="Collections 180 Plus") %>%
+  subset(IVRSkill!="Collections 121-150") %>%
+  subset(IVRSkill!="OB Sales") %>%
+  subset(IVRSkill!="Collections 151-180") %>%
+  subset(IVRSkill!="Test Inbound Sales") %>%
+  subset(IVRSkill!="AutoAttendant_CC_Tier2") %>%
+  subset(IVRSkill!="OB Welcome Call") %>%
+  subset(IVRSkill!="OB Dispatch 1") %>%
+  subset(IVRSkill!="OB Dispatch Attempt 2 3") %>%
+  subset(IVRSkill!="Dispatch Attempt 2") %>%
+  subset(IVRSkill!="OB Dispatch 2") %>%
+  subset(IVRSkill!="Dispositions TEST IB Call") %>%
+  subset(IVRSkill!="WT - Old Opty") %>%
+  subset(IVRSkill!="GoLive Test") %>%
+  subset(IVRSkill!="IB Test A") %>%
+  subset(IVRSkill!="Sales-Temp") %>%
+  subset(IVRSkill!="Dispatch Test") %>%
+  subset(IVRSkill!="$500 Referral Promotion") %>%
+  subset(IVRSkill!="ADvised will we be out there on 3/21/201") %>%
+  subset(IVRSkill!="Dispatch Attempt 1") %>%
+  subset(IVRSkill!="Transfer to Sales") %>%
+  subset(IVRSkill!="Transfer to Collections") %>%
+  subset(IVRSkill!="Agent Xfer ServTrans") %>%
+  subset(IVRSkill!="Collections Dispute") %>%
+  mutate(Activity.Duplicate.Finder = if_else(lead(InContactContactID)==InContactContactID & D.IN==1 & is.na(RelatedTo),1,0)) %>%
+  mutate(RelatedTo = if_else(Activity.Duplicate.Finder==1,lead(RelatedTo),RelatedTo)) %>%
+  subset(D.IN!=1)
+
+IVRSkill_List <- Activities_df1 %>%
+  group_by(IVRSkill) %>%
+  summarize(Totals = n()) %>%
+  arrange(desc(Totals))
+
+
+##
+
+Users_Owners <- rawUsers %>%
+  select(c("Id","FullName","Title")) %>%
+  mutate(CaseOwnerName = FullName) %>%
+  mutate(FullName=NULL) %>%
+  mutate(CaseOwnerTitle = Title) %>%
+  mutate(Title = NULL)
+
+Cases_df1 <- left_join(Cases_df1,Users_Owners,by=c("OwnerId" = "Id"))
+Activities_df1 <- left_join(Activities_df1,Cases_df1,by=c("RelatedTo"="CaseID"))
+
+Activities_df1 <- Activities_df1 %>%
+  mutate(ContractID = if_else(is.na(ContractID) & grepl(810,RelatedTo),RelatedTo,ContractID)) %>%
+  mutate(ContractID = if_else(is.na(ContractID) & grepl("0010d00001LjeMEAAZ",RelatedTo),RelatedTo,ContractID))
+  
+
+Activities_df1 <- left_join(Activities_df1,SC_df1,by="ContractID")
+Activities_df1 <- left_join(Activities_df1,rawUsers,by=c("ActivityCreatedBy"="Id"))
+
+##
+
+Activities_df1$HireDate <- as.Date(Activities_df1$HireDate)
+Activities_df1$PositionStart <- as.Date(Activities_df1$PositionStart)
+Activities_df1$TermDate <- as.Date(Activities_df1$TermDate)
+
+
+Activities_df1 <- Activities_df1 %>%
+  subset(Department=="Customer Care - 1110") %>%
+  arrange(ContractID,ActivityTime) %>%
+  mutate(Date.Dup = if_else(lead(ActivityCreatedTime)==ActivityCreatedTime &
+                              lead(ContractID)==ContractID,1,0))
+
+Random_DocDuplicateActivities_hold <- Activities_df1 
+
+Random_DocDuplicateActivities <- Random_DocDuplicateActivities_hold %>%
+  subset(Date.Dup==1)
+
+Activities_df1 <- Activities_df1 %>%
+  subset(Date.Dup==0) %>%
+  arrange(ContractName,ActivityCreatedOnDate,ActivityTime) %>%
+  mutate(Dup.Contract = if_else(duplicated(ContractName),1,0)) %>%
+  mutate(Distance = if_else(lag(ContractName)==ContractName,
+                            ActivityCreatedOnDate-lag(ActivityCreatedOnDate),999)) %>%
+  mutate(Distance = as.numeric(Distance)) %>%
+  mutate(Distance = if_else(is.na(Distance),999,Distance)) %>%
+  mutate(Distance.Two = as.character(Distance)) %>%
+  mutate(Distance.Two = sub("999","Initial Call",Distance.Two)) %>%
+  mutate(GlobalCaseReason = if_else(is.na(ActivityReason),CaseReason,
+                              if_else(is.na(CaseReason),ActivityReason,CaseReason))) %>%
+  mutate(GlobalSubsetReason = if_else(is.na(ActivitySubset),SubsetReason,
+                                      if_else(is.na(SubsetReason),ActivitySubset,SubsetReason)))
+
+
+##
+
+Repeat_30_Minus_VCB <- Activities_df1 %>%
+  arrange(ContractName,ActivityCreatedOnDate,ActivityTime) %>%
+  mutate(D.IN = if_else(duplicated(InContactContactID),1,0)) %>%
+  subset(D.IN==0) %>%
+  mutate(D.IN=NULL) %>%
+  subset(Distance.Two!="Initial Call") %>%
+  mutate(Distance.Two=NULL) %>%
+  subset(Distance<=30) %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(CallDuration>120)
+
+Repeat_30_Minus_VCB <- Repeat_30_Minus_VCB [with(Repeat_30_Minus_VCB, order(ContractName,ActivityCreatedOnDate)),]
+
+
+## Binary Fleet Potentials ----------------------------------
+
+Fleet_Summary <- Fleet_ByDistance %>%
+  ungroup() %>%
+  subset(!is.na(PTODate)) %>%
+  mutate(Under.100.Month = as.Date(as.yearmon(PTO.Under.100))) %>%
+  mutate(PTO.Month = as.Date(as.yearmon(PTODate))) %>%
+  mutate(Jan = if_else(PTO.Month=="2018-01-01" &
+                         Under.100.Month=="2018-05-01" |
+                         Under.100.Month=="2018-04-01" |
+                         Under.100.Month=="2018-03-01" |
+                         Under.100.Month=="2018-02-01" |
+                         Under.100.Month=="2018-01-01",1,0)) %>%
+  mutate(Feb = if_else(PTO.Month=="2018-02-01" &
+                         Under.100.Month=="2018-06-01" |
+                         Under.100.Month=="2018-05-01" |
+                         Under.100.Month=="2018-04-01" |
+                         Under.100.Month=="2018-03-01" |
+                         Under.100.Month=="2018-02-01",1,0)) %>%
+  mutate(Mar = if_else(PTO.Month=="2018-03-01" &
+                         Under.100.Month=="2018-07-01" |
+                         Under.100.Month=="2018-06-01" |
+                         Under.100.Month=="2018-05-01" |
+                         Under.100.Month=="2018-04-01" |
+                         Under.100.Month=="2018-03-01",1,0)) %>%
+  mutate(Apr = if_else(PTO.Month=="2018-04-01" &
+                         Under.100.Month=="2018-08-01" |
+                         Under.100.Month=="2018-07-01" |
+                         Under.100.Month=="2018-06-01" |
+                         Under.100.Month=="2018-05-01" |
+                         Under.100.Month=="2018-04-01",1,0)) %>%
+  mutate(May = if_else(PTO.Month=="2018-05-01" &
+                         Under.100.Month=="2018-09-01" |
+                         Under.100.Month=="2018-08-01" |
+                         Under.100.Month=="2018-07-01" |
+                         Under.100.Month=="2018-06-01" |
+                         Under.100.Month=="2018-05-01",1,0)) %>%
+  mutate(Jun = if_else(PTO.Month=="2018-06-01" &
+                         Under.100.Month=="2018-10-01" |
+                         Under.100.Month=="2018-09-01" |
+                         Under.100.Month=="2018-08-01" |
+                         Under.100.Month=="2018-07-01" |
+                         Under.100.Month=="2018-06-01",1,0)) %>%
+  mutate(Jul = if_else(PTO.Month=="2018-07-01" &
+                         Under.100.Month=="2018-11-01" |
+                         Under.100.Month=="2018-10-01" |
+                         Under.100.Month=="2018-09-01" |
+                         Under.100.Month=="2018-08-01" |
+                         Under.100.Month=="2018-07-01",1,0)) %>%
+  mutate(Aug = if_else(PTO.Month=="2018-08-01" &
+                         Under.100.Month=="2018-12-01" |
+                         Under.100.Month=="2018-11-01" |
+                         Under.100.Month=="2018-10-01" |
+                         Under.100.Month=="2018-09-01" |
+                         Under.100.Month=="2018-08-01",1,0)) %>%
+  mutate(Sep = if_else(PTO.Month=="2018-09-01" &
+                         Under.100.Month=="2019-01-01" |
+                         Under.100.Month=="2018-12-01" |
+                         Under.100.Month=="2018-11-01" |
+                         Under.100.Month=="2018-10-01" |
+                         Under.100.Month=="2018-09-01",1,0)) %>%
+  mutate(Oct = if_else(PTO.Month=="2018-10-01" &
+                         Under.100.Month=="2019-02-01" |
+                         Under.100.Month=="2019-01-01" |
+                         Under.100.Month=="2018-12-01" |
+                         Under.100.Month=="2018-11-01" |
+                         Under.100.Month=="2018-10-01",1,0)) %>%
+  mutate(Nov = if_else(PTO.Month=="2018-11-01" &
+                         Under.100.Month=="2019-03-01" |
+                         Under.100.Month=="2019-02-01" |
+                         Under.100.Month=="2019-01-01" |
+                         Under.100.Month=="2018-12-01" |
+                         Under.100.Month=="2018-11-01",1,0)) %>%
+  mutate(Dec = if_else(PTO.Month=="2018-12-01" &
+                         Under.100.Month=="2019-04-01" |
+                         Under.100.Month=="2019-03-01" |
+                         Under.100.Month=="2019-02-01" |
+                         Under.100.Month=="2019-01-01" |
+                         Under.100.Month=="2018-12-01",1,0)) %>%
+  ungroup() %>%
+  arrange(PTODate)
+
+
+Fleet_Summary_df2 <- Fleet_Summary %>%
+  group_by(PTO.Month) %>%
+  summarize(Jan.Totals = sum(Jan),
+            Feb.Totals = sum(Feb),
+            Mar.Totals = sum(Mar),
+            Apr.Totals = sum(Apr),
+            May.Totals = sum(May),
+            Jun.Totals = sum(Jun),
+            Jul.Totals = sum(Jul),
+            Aug.Totals = sum(Aug),
+            Sep.Totals = sum(Sep),
+            Oct.Totals = sum(Oct),
+            Nov.Totals = sum(Nov),
+            Dec.Totals = sum(Dec)) %>%
+  ungroup() %>%
+  mutate(Jan.Cohort = sum(Jan.Totals)) %>%
+  mutate(Feb.Cohort = sum(Feb.Totals)) %>%
+  mutate(Mar.Cohort = sum(Mar.Totals)) %>%
+  mutate(Apr.Cohort = sum(Apr.Totals)) %>%
+  mutate(May.Cohort = sum(May.Totals)) %>%
+  mutate(Jun.Cohort = sum(Jun.Totals)) %>%
+  mutate(Jul.Cohort = sum(Jul.Totals)) %>%
+  mutate(Aug.Cohort = sum(Aug.Totals)) %>%
+  mutate(Sep.Cohort = sum(Sep.Totals)) %>%
+  mutate(Oct.Cohort = sum(Oct.Totals)) %>%
+  mutate(Nov.Cohort = sum(Nov.Totals)) %>%
+  mutate(Dec.Cohort = sum(Dec.Totals)) %>%
+  select("Jan.Cohort","Feb.Cohort","Mar.Cohort","Apr.Cohort",
+         "May.Cohort","Jun.Cohort","Jul.Cohort","Aug.Cohort",
+         "Sep.Cohort","Oct.Cohort","Nov.Cohort","Dec.Cohort")
+
+Fleet_Summary_df2 <- Fleet_Summary_df2[1, ] ## remove extra rows
+Fleet_Summary_df2 <- as.data.frame(t(Fleet_Summary_df2)) ## transpose
+Fleet_Summary_df2 <- Fleet_Summary_df2 %>%
+  mutate(Possible.Cohort.Total = as.Date(c("2018-01-01","2018-02-01","2018-03-01",
+                                           "2018-04-01","2018-05-01","2018-06-01",
+                                           "2018-07-01","2018-08-01","2018-09-01",
+                                           "2018-10-01","2018-11-01","2018-12-01"))) %>%
+  mutate(FleetBaseline = V1) %>%
+  mutate(V1=NULL)
+
+
+## *************
+## 100-365 Day Potentials
+## *************
+
+Fleet_SummaryBetween <- Fleet_ByDistance %>%
+  ungroup() %>%
+  subset(!is.na(PTODate)) %>%
+  subset(PTODate>="2017-01-01") %>%
+  mutate(Between100.Month = as.Date(as.yearmon(PTO.Between))) %>%
+  mutate(Between100.Month = as.Date(Between100.Month) )%>%
+  mutate(PTO.Month = as.Date(as.yearmon(PTODate))) %>%
+  arrange(PTODate) %>%
+  mutate(Jan = if_else(PTODate>="2017-01-01" & PTODate<="2018-01-01",1,0)) %>%
+  mutate(Feb = if_else(PTODate>="2017-02-01" & PTODate<="2018-02-01",1,0)) %>%
+  mutate(Mar = if_else(PTODate>="2017-03-01" & PTODate<="2018-03-01",1,0)) %>%
+  mutate(Apr = if_else(PTODate>="2017-04-01" & PTODate<="2018-04-01",1,0)) %>%
+  mutate(May = if_else(PTODate>="2017-05-01" & PTODate<="2018-05-01",1,0)) %>%
+  mutate(Jun = if_else(PTODate>="2017-06-01" & PTODate<="2018-06-01",1,0)) %>%
+  mutate(Jul = if_else(PTODate>="2017-07-01" & PTODate<="2018-07-01",1,0)) %>%
+  mutate(Aug = if_else(PTODate>="2017-08-01" & PTODate<="2018-08-01",1,0)) %>%
+  mutate(Sep = if_else(PTODate>="2017-09-01" & PTODate<="2018-09-01",1,0)) %>%
+  mutate(Oct = if_else(PTODate>="2017-10-01" & PTODate<="2018-10-01",1,0)) %>%
+  mutate(Nov = if_else(PTODate>="2017-11-01" & PTODate<="2018-11-01",1,0)) %>%
+  mutate(Dec = if_else(PTODate>="2017-12-01" & PTODate<="2018-12-01",1,0)) %>%
+  ungroup() %>%
+  arrange(PTODate)
+
+Fleet_SummaryBetween_df2 <- Fleet_SummaryBetween %>%
+  group_by(PTO.Month) %>%
+  summarize(Jan.Totals = sum(Jan),
+            Feb.Totals = sum(Feb),
+            Mar.Totals = sum(Mar),
+            Apr.Totals = sum(Apr),
+            May.Totals = sum(May),
+            Jun.Totals = sum(Jun),
+            Jul.Totals = sum(Jul),
+            Aug.Totals = sum(Aug),
+            Sep.Totals = sum(Sep),
+            Oct.Totals = sum(Oct),
+            Nov.Totals = sum(Nov),
+            Dec.Totals = sum(Dec)) %>%
+  ungroup() %>%
+  mutate(Jan.Cohort = sum(Jan.Totals)) %>%
+  mutate(Feb.Cohort = sum(Feb.Totals)) %>%
+  mutate(Mar.Cohort = sum(Mar.Totals)) %>%
+  mutate(Apr.Cohort = sum(Apr.Totals)) %>%
+  mutate(May.Cohort = sum(May.Totals)) %>%
+  mutate(Jun.Cohort = sum(Jun.Totals)) %>%
+  mutate(Jul.Cohort = sum(Jul.Totals)) %>%
+  mutate(Aug.Cohort = sum(Aug.Totals)) %>%
+  mutate(Sep.Cohort = sum(Sep.Totals)) %>%
+  mutate(Oct.Cohort = sum(Oct.Totals)) %>%
+  mutate(Nov.Cohort = sum(Nov.Totals)) %>%
+  mutate(Dec.Cohort = sum(Dec.Totals)) %>%
+  select("Jan.Cohort","Feb.Cohort","Mar.Cohort","Apr.Cohort",
+         "May.Cohort","Jun.Cohort","Jul.Cohort","Aug.Cohort",
+         "Sep.Cohort","Oct.Cohort","Nov.Cohort","Dec.Cohort")
+
+Fleet_SummaryBetween_df2 <- Fleet_SummaryBetween_df2[1, ] ## remove extra rows
+Fleet_SummaryBetween_df2 <- as.data.frame(t(Fleet_SummaryBetween_df2)) ## transpose
+Fleet_SummaryBetween_df2 <- Fleet_SummaryBetween_df2 %>%
+  mutate(Possible.Cohort.Total = as.Date(c("2018-01-01","2018-02-01","2018-03-01",
+                                           "2018-04-01","2018-05-01","2018-06-01",
+                                           "2018-07-01","2018-08-01","2018-09-01",
+                                           "2018-10-01","2018-11-01","2018-12-01"))) %>%
+  mutate(FleetBaseline.Between = V1) %>%
+  mutate(V1=NULL)
+
+
+## NPS Scores  --------------------------------
+
+rawNPS <- read.csv("C:/Users/eric.reschke/Desktop/R/CSAT/raw/CSAT_GeneralData2.0.csv",
+                   header = TRUE,
+                   stringsAsFactors = FALSE,
+                   na.strings = c("","NA"))
+
+rawNPS$Contract.Name <- as.character(rawNPS$Contract.Name)
+rawNPS$Agreement.Number <- as.character(rawNPS$Agreement.Number)
+
+
+NPS_df1 <- rawNPS %>%
+  mutate(Month = ï..Month) %>%
+  mutate(ï..Month=NULL) %>%
+  mutate(Survey.Created.On.Dt = as.Date(Survey..Created.On.Dt)) %>%
+  mutate(Survey..Created.On.Dt=NULL) %>%
+  mutate(PTO.Dt=NULL) %>%
+  mutate(CSAT.Survey.Response = as.numeric(CSAT.Survey.Response)) %>%
+  arrange(Contract.Name,Survey.Created.On.Dt) %>%
+  mutate(Existing.Customer.Response = if_else(lead(Contract.Name)==Contract.Name & lead(Survey.Subtype)=="Existing Customer (100 Days)",lead(CSAT.Survey.Response),999)) %>%
+  mutate(Existing.Customer.Notes = if_else(lead(Contract.Name)==Contract.Name & lead(Survey.Subtype)=="Existing Customer (100 Days)",lead(Answer.1),"999")) %>%
+  subset(Survey.Subtype!="Existing Customer (100 Days)") %>%
+  arrange(Contract.Name,Survey.Created.On.Dt) %>%
+  mutate(OneYearPlus.Customer.Response = if_else(lead(Contract.Name)==Contract.Name & lead(Survey.Subtype)=="Existing Customer (>1 Year)",lead(CSAT.Survey.Response),999)) %>%
+  mutate(OneYearPlus.Customer.Notes = if_else(lead(Contract.Name)==Contract.Name & lead(Survey.Subtype)=="Existing Customer (>1 Year)",lead(Answer.1),"999")) %>%
+  subset(Survey.Subtype!="Existing Customer (>1 Year)") %>%
+  mutate(Existing.Customer.Response = as.character(Existing.Customer.Response)) %>%
+  mutate(Existing.Customer.Response = if_else(Existing.Customer.Response=="999","NA",Existing.Customer.Response)) %>%
+  mutate(Existing.Customer.Response = as.numeric(Existing.Customer.Response)) %>%
+  mutate(Existing.Customer.Notes = if_else(Existing.Customer.Notes=="999","NA",Existing.Customer.Notes)) %>%
+  mutate(OneYearPlus.Customer.Response = as.character(OneYearPlus.Customer.Response)) %>%
+  mutate(OneYearPlus.Customer.Response = if_else(OneYearPlus.Customer.Response=="999","NA",OneYearPlus.Customer.Response)) %>%
+  mutate(OneYearPlus.Customer.Response = as.numeric(OneYearPlus.Customer.Response)) %>%
+  mutate(OneYearPlus.Customer.Notes = if_else(OneYearPlus.Customer.Notes=="999","NA",OneYearPlus.Customer.Notes)) %>%
+  mutate(Contract.Name = as.character(Contract.Name))
+  
+
+
+
+## NPS Costco With Answers  --------------------------------
+
+## SFDC Rpt to check work: https://sunrun.my.salesforce.com/00O32000005CBiH
+## Oracle report == CSAT_withAnswers_01182019
+rawNPSwithAnswers <- read.csv("C:/Users/eric.reschke/Desktop/R/CSAT/raw/CSAT_withAnswers_01182019.csv",
+                   header = TRUE,
+                   stringsAsFactors = FALSE,
+                   na.strings = c("","NA"))
+
+rawNPSwithAnswers$Contract.Name <- as.character(rawNPSwithAnswers$Contract.Name)
+rawNPSwithAnswers$Agreement.Number <- as.character(rawNPSwithAnswers$Agreement.Number)
+
+NPSAnswers_df1 <- rawNPSwithAnswers %>%
+  mutate(Month = ï..Month) %>%
+  mutate(ï..Month=NULL) %>%
+  mutate(Survey.Created.On.Dt = as.Date(Survey..Created.On.Dt)) %>%
+  mutate(Survey..Created.On.Dt=NULL) %>%
+  mutate(PTO.Dt=NULL) %>%
+  mutate(CSAT.Survey.Response = as.numeric(CSAT.Survey.Response)) %>%
+  subset(Survey.Subtype!="Existing Customer (>1 Year)") %>%
+  filter(Survey.Created.On.Dt>="2018-01-01" & Survey.Created.On.Dt<"2019-01-01") %>%
+  mutate(Answer.2 = if_else(Answer.2=="Very Poor" | Answer.2=="Muy Pobre",1,
+                            if_else(Answer.2=="Poor" | Answer.2=="Pobre",2,
+                                    if_else(Answer.2=="Fair" | Answer.2=="Justa",3,
+                                            if_else(Answer.2=="Good" | Answer.2=="Buena",4,
+                                                    if_else(Answer.2=="Very Good" | Answer.2=="Muy Buena",5,
+                                                            if_else(grepl("N/",Answer.2),999,999))))))) %>%
+  mutate(Answer.3 = if_else(Answer.3=="Very Poor" | Answer.3=="Muy Pobre",1,
+                            if_else(Answer.3=="Poor" | Answer.3=="Pobre",2,
+                                    if_else(Answer.3=="Fair" | Answer.3=="Justa",3,
+                                            if_else(Answer.3=="Good" | Answer.3=="Buena",4,
+                                                    if_else(Answer.3=="Very Good" | Answer.3=="Muy Buena",5,
+                                                            if_else(grepl("N/",Answer.3),999,999))))))) %>%
+  mutate(Answer.4 = if_else(Answer.4=="Very Poor" | Answer.4=="Muy Pobre",1,
+                            if_else(Answer.4=="Poor" | Answer.4=="Pobre",2,
+                                    if_else(Answer.4=="Fair" | Answer.4=="Justa",3,
+                                            if_else(Answer.4=="Good" | Answer.4=="Buena",4,
+                                                    if_else(Answer.4=="Very Good" | Answer.4=="Muy Buena",5,
+                                                            if_else(grepl("N/",Answer.4),999,999))))))) %>%
+  mutate(Answer.5 = if_else(Answer.5=="Very Poor" | Answer.5=="Muy Pobre",1,
+                            if_else(Answer.5=="Poor" | Answer.5=="Pobre",2,
+                                    if_else(Answer.5=="Fair" | Answer.5=="Justa",3,
+                                            if_else(Answer.5=="Good" | Answer.5=="Buena",4,
+                                                    if_else(Answer.5=="Very Good" | Answer.5=="Muy Buena",5,
+                                                            if_else(grepl("N/",Answer.5),999,999))))))) %>%
+  arrange(Contract.Name,Survey.Created.On.Dt)
+
+NPSAnswers_df1[NPSAnswers_df1==999] <- NA
+
+NPSAnswers_df1 <- NPSAnswers_df1 %>%
+  mutate(PurcahsedThruClean = if_else(grepl("Costco",Purchased.Thru),"Costco","Direct"))
+
+
+
+# NPSAnswers_Summary <- NPSAnswers_df1 %>%
+#   group_by(Survey.Subtype) %>%
+#   summarize(SalesRepresentative = mean(Answer.2),
+#             InstallationTeam = mean(Answer.3),
+#             CustomerCareAgents = mean(Answer.4),
+#             Logistics = mean(Answer.5))
+
+
+
+
+## NPS (Savings) Detractor with Sales rep and install partner -----------------------
+
+#Detractor_By_Sales_Install_df1 <- Cases_df1 %>%
+#  subset(CaseSubject=="Survey Detractor Callback")
+
+#Detractor_By_Sales_Install_df1 <- left_join(Detractor_By_Sales_Install_df1,SC_df1,
+#                                      by="ContractID")
+
+#Detractor_By_Sales_Install_df1 <- Detractor_By_Sales_Install_df1 %>%
+#  mutate(Managed.Partner = if_else(grepl("Sunrun",InstallPartner),
+#                                 "Sunrun","Partner")) 
+
+#Detractor_By_Sales_Install_df1 <- left_join(Detractor_By_Sales_Install_df1,Oppty_df1,
+#                                      by=c("OpportunityID"="OppyID"))
+
+## part 2... https://sunrun.my.salesforce.com/00O0d000005DJng
+
+#Detractor_By_Sales_Install_p1 <- Detractor_By_Sales_Install_df1 %>%
+#  select(c("ContractName","CaseID","CaseNumber","SalesRepOne"))
+#
+#rawDetractorSavings <- read.csv("C:/Users/eric.reschke/desktop/savings_SFDC.csv",
+#                                header=TRUE,
+#                                stringsAsFactors = FALSE,
+#                                na.strings = c("","NA"))
+#
+#rawDetractorSavings <- head(rawDetractorSavings,-5)
+#  
+#Detractor_By_Sales_Install_p2 <- Detractor_By_Sales_Install_p1
+#
+#Detractor_By_Sales_Install_p2 <- left_join(Detractor_By_Sales_Install_p2,rawDetractorSavings,
+#                                           by=c("ContractName"="Service.Contract"))
+#
+#Detractor_By_Sales_Install_p2 <- left_join(Detractor_By_Sales_Install_p2,SC_df1,
+#                                           by="ContractName")
+#
+#Detractor_By_Sales_Install_p2 <- Detractor_By_Sales_Install_p2 %>%
+#  subset(!is.na(Created.Alias)) %>%
+#  mutate(Managed.Partner = if_else(grepl("Sunrun",InstallPartner),"Sunrun","Partner")) %>%
+#  group_by(SalesRepOne,Managed.Partner) %>%
+#  summarize(SalesRep.Detractor.Total = n()) %>%
+#  arrange(desc(SalesRep.Detractor.Total))
+
+
+## Tenure Doc Import -----------------------
+
+## **************************
+## Still using tenure doc to keep the CM/Tier 1 assignments up to date as well as Service Transfer data
+## **************************
+
+Assignments <- read.table("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Tenure.txt",
+                          header=TRUE,
+                          na.strings = "NA",
+                          sep="\t")
+
+Assignments <- Assignments[order(Assignments$Activity.Created.By.Name,decreasing=FALSE),]
+
+require(stringr)
+
+Assignments <- Assignments %>%
+  mutate(Name = str_trim(Assignments$Activity.Created.By.Name))
+
+Assignments$Activity.Created.By.Name <- NULL 
+colnames(Assignments)[colnames(Assignments)=="Name"] <- "Rep.Name"
+
+## CM only
+Assignments_CM <- Assignments %>%
+  subset(grepl("CM",SSN)) %>%
+  subset(Active==1)
+
+## ST only
+Assignments_ST <- Assignments %>%
+  subset(grepl("ST",SSN)) %>%
+  subset(Active==1)
+
+## Costco only
+Assignments_Costco <- Assignments %>%
+  subset(grepl("Coscto",SSN)) %>%
+  subset(Active==1) 
+
+
+## User Audit By Activity ----------------------------------
+
+holderDate <- as.Date("2999-01-01")
+
+User_Audit <- Activities_df1 %>%
+  arrange(FullName,ActivityCreatedOnDate) %>%
+  mutate(FirstCall = if_else(duplicated(FullName,fromLast = FALSE),0,1)) %>%
+  mutate(LastCall = if_else(duplicated(FullName,fromLast = TRUE),0,1)) %>%
+  mutate(Keep = if_else(FirstCall==1 | LastCall==1,1,0)) %>%
+  subset(Keep==1) %>%
+  arrange(FullName,ActivityCreatedOnDate) %>%
+  mutate(FirstDate = if_else(Keep==1 & lead(FullName)==FullName,1,0)) %>%
+  mutate(LastDate = if_else(Keep==1 & lag(FullName)==FullName,1,0)) %>%
+  mutate(FirstDate = if_else(FirstDate==1,ActivityCreatedOnDate,holderDate)) %>%
+  mutate(LastDate = if_else(LastDate==1,ActivityCreatedOnDate,holderDate)) %>%
+  mutate(Keep=NULL) %>%
+  mutate(LastDate = if_else(lead(FullName)==FullName,lead(LastDate),LastDate)) %>%
+  subset(FirstCall!=0) %>%
+  mutate(FirstCall=NULL) %>%
+  mutate(LastCall=NULL) %>%
+  group_by(FullName,FirstDate,LastDate) %>%
+  summarize(Totals = n()) %>%
+  mutate(Totals = NULL) %>%
+  mutate(Leave.Open.Term = if_else(LastDate>=Twenty_Days,1,0)) %>%
+  mutate(LastDate = if_else(Leave.Open.Term==1,holderDate,LastDate)) %>%
+  mutate(Leave.Open.Term=NULL) %>%
+  mutate(Active = if_else(LastDate==holderDate,1,0))
+
+User_Audit_Actives <- User_Audit %>%
+  subset(Active==1)
+
+User_Audit_Actives <- left_join(CareReps,User_Audit_Actives,by="FullName")
+User_Audit_Actives <- left_join(User_Audit_Actives,Assignments,by=c("FullName"="Rep.Name"))
+
+
+## only users that have taken calls in the last 20 days will show up in this final audit list...
+User_Audit_Actives <- User_Audit_Actives %>%
+  subset(!is.na(FirstDate)) %>%
+  mutate(Active=NULL) %>%
+  mutate(CM = if_else(FullName %in% Assignments_CM$Rep.Name,1,0)) %>%
+  subset(CM==0) %>%
+  mutate(CM=NULL) %>%
+  arrange(FullName) %>%
+  select(c("FullName","FirstName","LastName","ManagerName","Assigned.CM"))
+
+
+
+
+## NPS Month-over-Month Graph -----------------------
+
+NPS_SC_Merge <- left_join(rawNPS,SC_df1,by=c("Contract.Name"="ContractName"))
+
+NPS_Monthly <- NPS_SC_Merge %>%
+  mutate(ï..Month=NULL) %>%
+  subset(grepl("Sunrun",Install.Partner)) %>%
+  subset(Survey.Subtype=="Existing Customer (100 Days)") %>%
+  mutate(PTO.Month = as.Date(as.yearmon(PTODate))) %>%
+  mutate(Created.Month = as.Date(as.yearmon(Survey..Created.On.Dt))) %>%
+  mutate(CSAT.Score.Grouping = if_else(CSAT.Survey.Response>=9,"Promoter",
+                                       if_else(CSAT.Survey.Response>=7 & CSAT.Survey.Response <=8,"Passive","Detractor"))) %>%
+  group_by(Created.Month,CSAT.Score.Grouping) %>%
+  summarize(Totals = n(),
+            Average = round(mean(CSAT.Survey.Response),1),
+            Median = median(CSAT.Survey.Response)) %>%
+  ungroup() %>%
+  subset(Created.Month>="2017-01-01") %>%
+  arrange(Created.Month)
+
+NPS_MonthlyTotals <- NPS_Monthly %>%
+  group_by(Created.Month) %>%
+  summarize(Total.Created = sum(Totals))
+
+NPS_Monthly <- left_join(NPS_Monthly,NPS_MonthlyTotals,by="Created.Month")
+
+NPS_Monthly <- NPS_Monthly %>%
+  mutate(Percent.By.Month = round(Totals/Total.Created,2))
+
+
+
+## **CM/ST Scorecard & RCs** --------------------------------
+
+Repeat_30_For_CMs <- left_join(Repeat_30_Minus_VCB,Assignments_CM,by=c("CaseOwnerName"="Rep.Name"))
+
+Repeat_CaseManager_Owners_df1 <- Repeat_30_For_CMs %>%
+  mutate(CaseManagerInvolved = if_else(!is.na(SSN),1,0)) %>%
+  mutate(RC.After.CM.Ownership = if_else(CaseManagerInvolved==1 & ActivityCreatedTime>=CreatedDate,
+                                         1,0)) %>%
+  mutate(Time.Diff = if_else(ActivityCreatedTime>=CreatedDate,
+                             ActivityCreatedTime-CreatedDate,CreatedDate-ActivityCreatedTime)) %>%
+  subset(!is.na(Time.Diff)) %>%
+  mutate(RC.After.CM.Ownership = if_else(Time.Diff<=1800,0,RC.After.CM.Ownership))
+
+Repeat_CaseManager_Owners_df2 <- Repeat_CaseManager_Owners_df1 %>%
+  group_by(Call.Month,RC.After.CM.Ownership) %>%
+  summarize(Totals = as.numeric(n())) %>%
+  ungroup() %>%
+  mutate(CMNotInvolved = if_else(RC.After.CM.Ownership==0,Totals,0)) %>%
+  mutate(CMInvolved = if_else(RC.After.CM.Ownership==1,Totals,0)) %>%
+  mutate(CMInvolved = if_else(Call.Month==lead(Call.Month) & CMInvolved==0,
+                              lead(CMInvolved),CMInvolved)) %>%
+  subset(CMNotInvolved!=0) %>%
+  mutate(Totals = CMInvolved+CMNotInvolved) %>%
+  mutate(RC.After.CM.Ownership=NULL) %>%
+  select(c("Call.Month","CMNotInvolved","CMInvolved","Totals"))
+
+Repeat_CaseManager_Owners_Scorecard <- Repeat_CaseManager_Owners_df1 %>%
+  subset(RC.After.CM.Ownership==1) %>%
+  group_by(Call.Month,CaseOwnerName) %>%
+  summarize(Post.CM.Owner.RCs = as.numeric(n())) %>%
+  ungroup() %>%
+  subset(Call.Month==CurrentMonth)
+
+
+## **Service Transfer Repeats By Case Owner Ownership** --------------------------------
+
+Repeat_30_For_ST <- left_join(Repeat_30_Minus_VCB,Assignments_ST,by=c("CaseOwnerName"="Rep.Name"))
+
+Repeat_ServiceTransfer_Owners_df1 <- Repeat_30_For_ST %>%
+  mutate(ServiceTransferInvolved = if_else(!is.na(SSN),1,0)) %>%
+  mutate(RC.After.ST.Ownership = if_else(ServiceTransferInvolved==1 & ActivityCreatedTime>=CreatedDate,
+                                         1,0)) %>%
+  mutate(Time.Diff = if_else(ActivityCreatedTime>=CreatedDate,
+                             ActivityCreatedTime-CreatedDate,CreatedDate-ActivityCreatedTime)) %>%
+  subset(!is.na(Time.Diff)) %>%
+  mutate(RC.After.ST.Ownership = if_else(Time.Diff<=1800,0,RC.After.ST.Ownership))
+
+Repeat_ServiceTransfer_Owners_df2 <- Repeat_ServiceTransfer_Owners_df1 %>%
+  group_by(Call.Month,RC.After.ST.Ownership) %>%
+  summarize(Totals = as.numeric(n())) %>%
+  ungroup() %>%
+  mutate(STNotInvolved = if_else(RC.After.ST.Ownership==0,Totals,0)) %>%
+  mutate(STInvolved = if_else(RC.After.ST.Ownership==1,Totals,0)) %>%
+  mutate(STInvolved = if_else(Call.Month==lead(Call.Month) & STInvolved==0,
+                              lead(STInvolved),STInvolved)) %>%
+  subset(STNotInvolved!=0) %>%
+  mutate(Totals = STInvolved+STNotInvolved) %>%
+  mutate(RC.After.ST.Ownership=NULL) %>%
+  select(c("Call.Month","STNotInvolved","STInvolved","Totals"))
+
+Repeat_ServiceTransfer_Owners_Scorecard <- Repeat_ServiceTransfer_Owners_df1 %>%
+  subset(RC.After.ST.Ownership==1) %>%
+  group_by(Call.Month,CaseOwnerName) %>%
+  summarize(Post.ST.Owner.RCs = as.numeric(n())) %>%
+  ungroup() %>%
+  subset(Call.Month==CurrentMonth)
+
+
+
+## **Documented Calls Grand Total** --------------------------------
+
+GrandTotal <- Activities_df1 %>%
+  mutate(No.Act.Reason = if_else(is.na(ActivityReason),1,0)) %>%
+  mutate(No.Case.Reason = if_else(is.na(CaseReason),1,0)) %>%
+  mutate(No.Contract.ID = if_else(is.na(ContractID),1,0)) %>%
+  mutate(Incorrect = if_else(No.Act.Reason==1 & No.Case.Reason==1,1,
+                             if_else(is.na(ContractID),1,0))) %>%
+  mutate(Correct = if_else(Incorrect==0,1,0)) %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate)))
+
+GrandTotal <- left_join(GrandTotal,SC_Utility,by=c("ContractName","Utility"))
+
+Rep_Documentation_Count <- GrandTotal %>%
+  #CurrentScorecard_Dates()
+  filter(ActivityCreatedOnDate>=DocStart & ActivityCreatedOnDate<=DocEnd)
+
+Training_Doc_Rpt <- Rep_Documentation_Count %>%
+  subset(Call.Month==CurrentMonth) %>%
+  mutate(Missing.Both = if_else(No.Act.Reason==1 & No.Case.Reason==1,1,0))
+
+Rep_Documentation_Count <- Rep_Documentation_Count %>%
+  group_by(FullName,Incorrect,Correct) %>%
+  summarize(Activity.Sum=as.numeric(n())) %>%
+  ungroup() %>%
+  arrange(FullName) %>%
+  mutate(Incorrect=as.numeric(Incorrect)) %>%
+  mutate(Correct = as.numeric(Correct)) %>%
+  mutate(Incorrect = if_else(is.na(lead(FullName)) & Incorrect==0,0,
+                             if_else(is.na(lead(FullName)) & Incorrect==1,Activity.Sum,
+                                     if_else(FullName==lead(FullName) & Incorrect==0,lead(Activity.Sum),
+                                             if_else(lead(FullName)!=FullName& Incorrect==0,0,Activity.Sum))))) %>%
+  mutate(Correct = if_else(Correct==1,Activity.Sum,Correct)) %>%
+  subset(Correct != 0) %>%
+  mutate(Activity.Sum = Incorrect+Correct) %>%
+  mutate(DocAccuracyRate = round(Correct/Activity.Sum,2))
+
+Monthly_Documentation_Count <- GrandTotal %>%
+  group_by(Call.Month) %>%
+  summarize(Documentation.Count=n())
+
+
+## Handled Calls & Repeats By Month/Handled --------------------------------
+
+RC_By_Month <- Repeat_30_Minus_VCB %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  group_by(Call.Month) %>%
+  summarize(RC.Totals.Per.Month = n())
+
+##
+
+InContact_df1 <- InContact_df1 %>%
+  filter(CAMPAIGN_NAME == "Care_Tier1_Inbound" | 
+           CAMPAIGN_NAME == "Customer Service") %>%
+  subset(AGENT_DUR!=0) %>%
+  subset(grepl("Tier 1",TEAM_NAME)) %>%
+  filter(TEAM_NAME!="Advisor Tier 1" &
+           TEAM_NAME!="Tier 1 Supervisors" &
+           TEAM_NAME!="Tier 1 Team Leads") %>%
+  arrange(desc(Start_Date))
+
+InContact_Summary <- InContact_df1 %>%
+  group_by(Start_Date) %>%
+  summarize(HandledCalls = n()) %>%
+  arrange(desc(Start_Date))
+
+ANI_Review <- InContact_df1 %>%
+  filter(Start_Date>="2018-01-01" & Start_Date<=Stopping_Date) %>%
+  group_by(ANI_DIALNUM) %>%
+  summarize(TotalANIs = n()) %>%
+  arrange(desc(TotalANIs))
+
+##
+
+rawMonthlyHandled <- read.csv("C:/Users/eric.reschke/Desktop/R/Repeats/raw/InContact_Monthly.csv",
+                                         stringsAsFactors = FALSE,
+                                         header=TRUE,
+                                         na.strings = "NA")
+
+Monthly_Handled_df1 <- rawMonthlyHandled
+Monthly_Handled_df1$Text.Month <- as.Date(as.yearmon(Monthly_Handled_df1$Text.Month))
+Monthly_Handled_df1$Handled.Calls <- as.numeric(Monthly_Handled_df1$Handled.Calls)
+
+##
+
+RC_By_Month <- left_join(RC_By_Month,Monthly_Handled_df1,
+                         by=c("Call.Month"="Text.Month"))
+
+##
+
+RC_By_Month <- RC_By_Month %>%
+  mutate(RC.Rate = round(RC.Totals.Per.Month/Handled.Calls,2)) %>%
+  mutate(FCR.Rate = 1-RC.Rate)
+
+## Documentation By Month --------------------------------
+
+Grand_NAs <- GrandTotal %>%
+  subset(is.na(CaseNumber)) 
+
+Documentation_By_Month <- GrandTotal %>%
+  group_by(Call.Month) %>%
+  summarize(Documented.Call.Total = n())
+
+RC_By_Month <- left_join(RC_By_Month,Documentation_By_Month,by="Call.Month")
+
+RC_By_Month <- RC_By_Month %>%
+  mutate(Documentation.Rate = if_else(round(Documented.Call.Total/Handled.Calls,2)>1,1,
+                                      round(Documented.Call.Total/Handled.Calls,2)))
+
+RC_By_Month <- RC_By_Month %>%
+  select(c("Call.Month","Handled.Calls","Documented.Call.Total",
+           "RC.Totals.Per.Month","RC.Rate","FCR.Rate","Documentation.Rate"))
+
+Documentation_By_Rep <- GrandTotal %>%
+  filter(Call.Month==CurrentMonth)
+
+
+## Random duplicate activities  --------------------------------
+
+# the main data.frame is created in the Initiate phase under Activites_df1...
+Rando <- Random_DocDuplicateActivities %>%
+  group_by(FullName) %>%
+  summarize(n=n())
+
+
+## Unique Callers -----------------------------------
+
+Unique_Callers_By_Month <- GrandTotal %>%
+  mutate(Distance.Two = if_else(Distance>30,"Initial Call",Distance.Two)) %>%
+  subset(Distance.Two=="Initial Call") %>%
+  group_by(Call.Month) %>%
+  summarize(Unique.Callers = n())
+
+Unique_Callers_By_Month <- left_join(Unique_Callers_By_Month,Monthly_Handled_df1,
+                                     by=c("Call.Month"="Text.Month"))
+
+Unique_Callers_By_Month <- Unique_Callers_By_Month %>%
+  mutate(Difference = Handled.Calls-Unique.Callers)
+
+Unique_Callers_By_Month <- left_join(Unique_Callers_By_Month,RC_By_Month,
+                                     by=c("Call.Month","Handled.Calls"))
+
+Unique_Callers_By_ByYear <- GrandTotal %>%
+  filter(ActivityCreatedOnDate>="2018-01-01" && ActivityCreatedOnDate<=CurrentMonth) %>%
+  mutate(Uniques = if_else(duplicated(ContractID,fromLast = FALSE),1,0)) %>%
+  arrange(ContractID) %>%
+  subset(Uniques==0) %>%
+  summarize(Uniques.Total = n())
+
+
+
+
+## PG&E Callers -----------------------------------
+
+Utility_PGE_Repeats <- Repeat_30_Minus_VCB %>%
+  arrange(desc(ContractName)) %>%
+  subset(Call.Month>="2017-01-01") %>%
+  subset(Utility=="PG&E") %>%
+  group_by(Call.Month,Utility) %>%
+  summarize(Utility.Repeats = n())
+
+Utility_PGE_Unique <- GrandTotal %>%
+  arrange(desc(ContractName)) %>%
+  subset(Call.Month>="2017-01-01") %>%
+  subset(Utility=="PG&E") %>%
+  mutate(Distance.Two = if_else(Distance>30,"Initial Call",Distance.Two)) %>%
+  subset(Distance.Two=="Initial Call") %>%
+  group_by(Call.Month) %>%
+  summarize(Unique.Callers = n())
+
+Utility_PGE <- GrandTotal %>%
+  arrange(desc(ContractName)) %>%
+  subset(Call.Month>="2017-01-01") %>%
+  subset(Utility=="PG&E") %>%
+  group_by(Call.Month) %>%
+  summarize(Utility.Total = n())
+
+Utility_PGE <- left_join(Utility_PGE,Utility_PGE_Repeats,by="Call.Month")
+Utility_PGE <- left_join(Utility_PGE,Utility_PGE_Unique,by="Call.Month")
+
+Utility_PGE <- Utility_PGE %>%
+  mutate(Utility=NULL) %>%
+  select(c("Call.Month","Utility.Repeats","Unique.Callers","Utility.Total"))
+
+
+## NPS 100 Day customer 10/15/2018 cut-off  --------------------------------
+
+Unique_Callers_ForNPS <- GrandTotal %>%
+  mutate(Distance.Two = if_else(Distance>30,"Initial Call",Distance.Two)) %>%
+  subset(Distance.Two=="Initial Call") %>%
+  mutate(PTO.Plus.100.Date = PTODate+100) 
+
+NPS_Callers100Day <- left_join(Unique_Callers_ForNPS,NPS_df1,by=c("ContractName"="Contract.Name"))
+
+# --
+## assessment of unique caller case reasons
+Unique_Caller_CaseReasons <- Unique_Callers_ForNPS %>%
+  filter(ActivityCreatedOnDate>="2018-01-01" & ActivityCreatedOnDate<"2019-01-01") %>%
+  arrange(desc(Call.Month),GlobalCaseReason) %>%
+  mutate(GlobalCaseReason = if_else(grepl("Bill",GlobalCaseReason),"Billing & Payments",GlobalCaseReason)) %>%
+  group_by(GlobalCaseReason) %>%
+  summarize(CaseReasonTotals = as.numeric(n())) %>%
+  ungroup() %>%
+  arrange(desc(CaseReasonTotals)) %>%
+  mutate(GlobalCaseReason = if_else(is.na(GlobalCaseReason),"Not documented",GlobalCaseReason))
+
+Unique_Caller_SubsetReason <- Unique_Callers_ForNPS %>%
+  filter(ActivityCreatedOnDate>="2018-01-01" & ActivityCreatedOnDate<"2019-01-01") %>%
+  arrange(desc(Call.Month),GlobalSubsetReason) %>%
+  group_by(GlobalSubsetReason) %>%
+  summarize(SubsetReasonTotals = as.numeric(n())) %>%
+  ungroup() %>%
+  arrange(desc(SubsetReasonTotals)) %>%
+  mutate(GlobalSubsetReason = if_else(is.na(GlobalSubsetReason),"Not documented",GlobalSubsetReason))
+
+
+
+##
+## back to NPS...
+NPS_Callers100Day <- NPS_Callers100Day %>%
+  subset(!is.na(CSAT.Survey.Response)) %>%
+  mutate(Dup = if_else(duplicated(ContractID,fromLast = FALSE),0,1)) %>%
+  subset(Dup==1) %>%
+  mutate(PTO.Month = as.Date(as.yearmon(PTODate)))
+
+## split the populations
+
+NPS100Day_Callers_PreOctoberFifteen <- NPS_Callers100Day %>%
+  filter(ActivityCreatedOnDate>="2018-01-01" & ActivityCreatedOnDate<="2018-10-15") %>%
+  mutate(Year.Group = "2018") %>%
+  subset(!is.na(Existing.Customer.Response)) %>%
+  group_by(Year.Group) %>%
+  summarize(Total.Participants.Pre = n(),
+            Avg.Score.Pre = mean(Existing.Customer.Response,0),
+            Median.Score.Pre  = round(median(Existing.Customer.Response,0)),
+            Traditional.Score.Pre = round(mean(NPS.Value)*100,0))
+
+NPS100Day_Callers_POSTOctober <- NPS_Callers100Day %>%
+  subset(ActivityCreatedOnDate>"2018-10-15") %>%
+  mutate(Year.Group = "2018") %>%
+  subset(!is.na(Existing.Customer.Response)) %>%
+  group_by(Year.Group) %>%
+  summarize(Total.Participants.Post = n(),
+            Avg.Score.Post = mean(Existing.Customer.Response,0),
+            Median.Score.Post  = median(Existing.Customer.Response),
+            Traditional.Score.Post = round(mean(NPS.Value)*100,0))
+
+##
+
+NPS_Callers100Day_Summary <- left_join(NPS100Day_Callers_PreOctoberFifteen,NPS100Day_Callers_POSTOctober,
+                                       by="Year.Group")
+
+
+
+## SRM only...
+
+NPS_SRM_Only_100Day_Callers_PreOctoberFifteen <- NPS_Callers100Day %>%
+  subset(grepl("Sunrun",InstallPartner)) %>%
+  filter(ActivityCreatedOnDate>="2018-01-01" & ActivityCreatedOnDate<="2018-10-15") %>%
+  mutate(Year.Group = "2018") %>%
+  subset(!is.na(Existing.Customer.Response)) %>%
+  group_by(Year.Group) %>%
+  summarize(Total.Participants.Pre = n(),
+            Avg.Score.Pre = mean(Existing.Customer.Response),
+            Median.Score.Pre  = median(Existing.Customer.Response),
+            Traditional.Score.Pre = round(mean(NPS.Value)*100,0))
+
+NPS_SRM_Only_100Day_Callers_POSTOctober <- NPS_Callers100Day %>%
+  subset(grepl("Sunrun",InstallPartner)) %>%
+  subset(ActivityCreatedOnDate>"2018-10-15") %>%
+  mutate(Year.Group = "2018") %>%
+  subset(!is.na(Existing.Customer.Response)) %>%
+  group_by(Year.Group) %>%
+  summarize(Total.Participants.Post = n(),
+            Avg.Score.Post = mean(Existing.Customer.Response),
+            Median.Score.Post  = median(Existing.Customer.Response),
+            Traditional.Score.Post = round(mean(NPS.Value)*100,0))
+
+##
+
+NPS_SRM_Only_Callers100Day_Summary <- left_join(NPS_SRM_Only_100Day_Callers_PreOctoberFifteen,NPS_SRM_Only_100Day_Callers_POSTOctober,
+                                       by="Year.Group")
+
+
+
+
+
+
+## IVR Skills -------------------------
+
+RC_Per_IVR_Skill <- Repeat_30_Minus_VCB %>%
+  subset(Call.Month>="2018-01-01") %>%
+  group_by(ContractName,IVRSkill) %>%
+  summarize(RC.Per.Skill = n()) %>%
+  ungroup() %>%
+  group_by(IVRSkill) %>%
+  summarize(Avg.RC.Per.Skill = round(mean(RC.Per.Skill),2)) %>%
+  arrange(desc(Avg.RC.Per.Skill))
+
+RC_Per_IVR_Cust <- Repeat_30_Minus_VCB %>%
+  group_by(Call.Month,ContractName) %>%
+  summarize(RC.Per.Customer = n()) %>%
+  ungroup() %>%
+  group_by(Call.Month) %>%
+  summarize(Avg.RC.Per.Customer = round(mean(RC.Per.Customer),2))
+
+## Case Reasons ----------------------------------
+
+CaseReasonsMonthly <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(Call.Month>="2018-01-01") %>%
+  group_by(Call.Month,GlobalCaseReason) %>%
+  summarize(Totals.By.CaseReason = as.numeric(n())) %>%
+  arrange(Call.Month,Totals.By.CaseReason) %>%
+  ungroup() %>%
+  mutate(GlobalCaseReason = if_else(is.na(GlobalCaseReason),"Not Documented",GlobalCaseReason)) 
+
+SubsetReasonsMonthly <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(Call.Month>="2018-01-01") %>%
+  group_by(Call.Month,GlobalSubsetReason) %>%
+  summarize(Totals.By.SubsetReason = as.numeric(n())) %>%
+  arrange(Call.Month,Totals.By.SubsetReason) %>%
+  ungroup() %>%
+  mutate(GlobalSubsetReason = if_else(is.na(GlobalSubsetReason),"Not Documented",GlobalSubsetReason))
+
+
+for(i in 0:9) {
+  tempDF <- SubsetReasonsMonthly
+}
+
+##
+CaseReasonsCombined <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(Call.Month>="2018-01-01") %>%
+  group_by(Call.Month,GlobalCaseReason,GlobalSubsetReason) %>%
+  summarize(Totals.By.Reason = as.numeric(n())) %>%
+  arrange(Call.Month,Totals.By.Reason) %>%
+  ungroup() %>%
+  mutate(GlobalCaseReason = if_else(is.na(GlobalCaseReason),"Not Documented",GlobalCaseReason)) %>%
+  mutate(GlobalCaseReason = if_else(grepl("Billing",GlobalCaseReason),"Billing & Payments",GlobalCaseReason)) %>%
+  mutate(GlobalSubsetReason = if_else(is.na(GlobalSubsetReason),"Not Documented",GlobalSubsetReason))
+
+## For global root cause project
+CaseReasonsWithNotes <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  filter(Call.Month>="2018-06-01" & Call.Month<"2019-01-01") %>%
+  mutate(GlobalCaseReason = if_else(grepl("Billing",GlobalCaseReason),"Billing & Payments",GlobalCaseReason)) %>%
+  mutate(GlobalCaseReason = if_else(is.na(GlobalCaseReason),"Not Documented",GlobalCaseReason)) %>%
+  mutate(GlobalSubsetReason = if_else(is.na(GlobalSubsetReason),"Not Documented",GlobalSubsetReason)) %>%
+  select(c("ContractID","ActivityId","ActivityNotes","CaseSubject","Description","InstallPartner",
+           "BrightBox","Distance","GlobalCaseReason","GlobalSubsetReason"))
+
+## Quarterly subsets (change dates manually) // Q4 - 2018
+SubsetReasonsByQuarter <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(Call.Month>="2018-10-01") %>% ##Q4 2018
+  group_by(GlobalCaseReason,GlobalSubsetReason) %>%
+  summarize(Totals = as.numeric(n())) %>%
+  arrange(desc(Totals)) %>%
+  ungroup() %>%
+  mutate(CaseReason = if_else(is.na(GlobalCaseReason),"Not Documented",GlobalCaseReason)) %>%
+  mutate(SubsetReason = if_else(is.na(GlobalSubsetReason),"Not Documented",GlobalSubsetReason)) %>%
+  mutate(GlobalCaseReason=NULL) %>%
+  mutate(GlobalSubsetReason=NULL) %>%
+  ungroup() %>%
+  mutate(Q4Portion = round(Totals/66411,2)) ##Q4 handled calls total
+
+
+## Repeats
+RC_Subsets <- Repeat_30_Minus_VCB %>%
+  subset(Call.Month==CurrentMonth) %>%
+  group_by(GlobalSubsetReason) %>%
+  summarize(RC.Totals = n()) %>%
+  arrange(desc(RC.Totals)) %>%
+  mutate(GlobalSubsetReason = if_else(is.na(GlobalSubsetReason),"Unknown",GlobalSubsetReason)) %>%
+  ungroup() %>%
+  mutate(Cumulative = cumsum(RC.Totals)) %>%
+  mutate(CumPercent= round(Cumulative/sum(RC.Totals),2)) %>%
+  mutate(GlobalSubsetReason = if_else(CumPercent>=0.90,"Others",GlobalSubsetReason)) %>%
+  ungroup() %>%
+  group_by(GlobalSubsetReason) %>%
+  summarize(RC.Totals=sum(RC.Totals)) %>%
+  arrange(desc(RC.Totals)) %>%
+  mutate(Cumulative = cumsum(RC.Totals)) %>%
+  mutate(CumPercent= round(Cumulative/sum(RC.Totals),2)) %>%
+  mutate(GlobalSubsetReason = if_else(GlobalSubsetReason=="Short-Term Removal & Reinstallation",
+                                "Short-Term R&R",GlobalSubsetReason)) %>%
+  mutate(GlobalSubsetReason = if_else(GlobalSubsetReason=="Component Error/Defect (Not Install-related)",
+                                "Component Error/Defect Non-Install",GlobalSubsetReason)) %>%
+  slice(1:10)
+
+##
+RC_CaseReasons <- Repeat_30_Minus_VCB %>%
+  subset(Call.Month==CurrentMonth) %>%
+  mutate(GlobalCaseReason = if_else(grepl("Billing",GlobalCaseReason),"Billing & Payments",GlobalCaseReason)) %>%
+  group_by(GlobalCaseReason) %>%
+  summarize(RC.CaseReason.Totals = n()) %>%
+  arrange(desc(RC.CaseReason.Totals)) %>%
+  mutate(GlobalCaseReason = if_else(is.na(GlobalCaseReason),"Unknown",GlobalCaseReason)) %>%
+  ungroup() %>%
+  mutate(Cumulative = cumsum(RC.CaseReason.Totals)) %>%
+  mutate(CumPercent= round(Cumulative/sum(RC.CaseReason.Totals),2)) %>%
+  mutate(GlobalCaseReason = if_else(CumPercent>=0.90,"Others",GlobalCaseReason)) %>%
+  ungroup() %>%
+  group_by(GlobalCaseReason) %>%
+  summarize(RC.CaseReason.Totals=sum(RC.CaseReason.Totals)) %>%
+  arrange(desc(RC.CaseReason.Totals)) %>%
+  mutate(Cumulative = cumsum(RC.CaseReason.Totals)) %>%
+  mutate(CumPercent= round(Cumulative/sum(RC.CaseReason.Totals),2))
+
+
+## Bilingual Reps ----------------------------------
+
+RC_Bilingual <- Repeat_30_Minus_VCB %>%
+  #subset(grepl("Bilingual",Title)) %>%
+  subset(IVRSkill=="Customer Service Span") %>%
+  group_by(Call.Month) %>%
+  summarize(IVRSkill = n())
+
+
+## Case Record Type ----------------------------------
+
+RC_RecordType <- Repeat_30_Minus_VCB %>%
+  group_by(CaseRecordTypeId) %>%
+  summarize(RecordType.Totals = n())
+
+##
+
+Monthly_Documentation_Count <- left_join(Monthly_Documentation_Count,RC_Bilingual,
+                                         by="Call.Month")
+
+##
+
+
+## **Rep Scorecard Daily Report** ----------------------------------
+
+##From Inview, download: rolling_30_day table and master table from "Eric R." dash
+
+Repeat_DailyScorecard <- Activities_df1 %>%
+  #CurrentScorecard_Dates() %>%
+  filter(ActivityCreatedOnDate>=Thirty_Days & ActivityCreatedOnDate<=DocEnd) %>%
+  arrange(ContractID,ActivityCreatedOnDate,ActivityTime) %>%
+  mutate(Called.After = if_else(is.na(lag(ContractID)),0,
+                                     if_else(is.na(lead(ContractID)),0,
+                                             if_else(lead(ContractID)==ContractID,1,0)))) %>%
+  mutate(Use.By.Date = if_else(ActivityCreatedOnDate>=Thirty_Days & ActivityCreatedOnDate<=Stopping_Date,1,0)) %>%
+  subset(Use.By.Date==1) %>%
+  mutate(Count.Against.Rep = ifelse(Distance<=30 & Called.After==1,1,
+                                    if_else(Distance.Two=="Initial Call" & Called.After==1,1,0)))
+
+Repeat_DailyScorecard_Audit <- Repeat_DailyScorecard %>%
+  select(c("ContractID","ActivityCreatedOnDate","ActivityTime","FullName","Called.After","Count.Against.Rep","Distance","Distance.Two"))
+
+Repeat_DailyScorecard <- Repeat_DailyScorecard %>%
+  subset(Count.Against.Rep==1) %>%
+  group_by(FullName) %>%
+  summarize(Repeat.Calls.By.Rep.Total = n()) %>%
+  ungroup() %>%
+  arrange(FullName)
+
+Repeat_DailyScorecard <- left_join(Rep_Documentation_Count,Repeat_DailyScorecard,by="FullName")
+
+Repeat_DailyScorecard$FullName[Repeat_DailyScorecard$FullName == "Jess Moreno"] <- "Jessy Moreno"
+Repeat_DailyScorecard$FullName[Repeat_DailyScorecard$FullName == "Danielle Perez Morales"] <- "Danielle Perez"
+Repeat_DailyScorecard$FullName[Repeat_DailyScorecard$FullName == "Heidi Reyes Lamas"] <- "Heidi Reyes"
+Repeat_DailyScorecard$FullName[Repeat_DailyScorecard$FullName == "Laura Montoya Montes"] <- "Laura Montes"
+Repeat_DailyScorecard$FullName[Repeat_DailyScorecard$FullName == "Gamaliel Rodriguez-Cruz"] <- "Gamaliel Rodriguez"
+
+Repeat_DailyScorecard <- left_join(Repeat_DailyScorecard,User_Audit_Actives,by="FullName")
+
+
+##
+## Export for KEY...
+
+hrs_worked_rawData <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/hrs_worked.csv",
+                               header=TRUE,
+                               na.strings=c("","NA"),
+                               skip=12)
+
+hrs_worked_df1 <- hrs_worked_rawData
+
+hrs_worked_df1 <- hrs_worked_df1[order(hrs_worked_df1$Name,decreasing=FALSE),]
+
+hrs_worked_df1$Date <- as.Date(hrs_worked_df1$Date,format="%m/%d/%Y")
+
+hrs_worked_df1 <- select(hrs_worked_df1,1,3,18)
+
+hrs_worked_df1 <- hrs_worked_df1 %>%
+  subset(!is.na(Name)) %>%
+  subset(!is.na(Date)) %>%
+  subset(!is.na(Totaled.Amount))
+
+hrs_worked_df1$Name <- as.character(hrs_worked_df1$Name)
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Langstaff, LeeAnn Michelle"] <- "Langstaff, LeeAnn"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "DeSosa, Tomas Enrique"] <- "DeSosa, Tomas"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Auringer, Christina Ann"] <- "Auringer, Christina"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Hickey, Kendall Alan"] <- "Hickey, Kendall"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Gutierrez, Bianca Omaraid"] <- "Gutierrez, Bianca"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Colmenero, Melissa Guadalupe"] <- "Colmenero, Melissa"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Perez Morales, Danielle"] <- "Perez, Danielle"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Reyes Lamas, Heidi"] <- "Reyes, Heidi"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Montoya Montes, Laura Elizabeth"] <- "Montes, Laura"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Martin, Megan Elizabeth"] <- "Martin, Megan"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Pohlod, Sean Reilly"] <- "Pohlod, Sean"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Rodriguez, Felicia Ann"] <- "Rodriguez, Felicia"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Rodriguez-Cruz, Gamaliel"] <- "Rodriguez, Gamaliel"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Martinez, Bernaldo A"] <- "Martinez, Bernie"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Berg, Jessica Nicole"] <- "Berg, Jessica"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Santacruz, Jesus Walter"] <- "Santacruz, Jesus"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Partida, Karla Deyanira"] <- "Partida, Karla"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Thebaut, Patricia B"] <- "Patricia Thebaut"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Petrey, Amber Smith"] <- "Petrey, Amber"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Rapplean, Brandon Barton"] <- "Rapplean, Brandon"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Hernandez, Christian"] <- "Hernandez, Christian"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Lange, Christina"] <- "Lange, Christina"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Williams-Vaughn, Courtney"] <- "Williams-Vaughn, Courtney"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Buenrostro, Ernest"] <- "Buenrostro, Ernest"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Medina, Larrisa Janel"] <- "Medina, Larrisa"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Powell, Lynea M"] <- "Powell, Lynea"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Coates, Molly Elizabeth"] <- "Coates, Molly"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Raff, Natalie Jean"] <- "Raff, Natalie"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Heredia, Oscar Lucas"] <- "Heredia, Oscar"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Elbeheiry, Sara"] <- "Elbeheiry, Sara"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Smith, Shaquea"] <- "Smith, Shaquea"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Rodriguez, Solmayra"] <- "Rodriguez, Solmayra"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Brown, Tyler"] <- "Brown, Tyler"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Lamar, Tammy S."] <- "Lamar, Tammy"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Patricia Thebaut"] <- "Thebaut, Patricia"
+hrs_worked_df1$Name[hrs_worked_df1$Name == "Valenzuela,  Sharelle"] <- "Valenzuela, Sharelle"
+
+
+
+hrs_worked_Summary <- hrs_worked_df1 %>%
+  group_by(Name) %>%
+  summarize(Hours.Worked = sum(Totaled.Amount)) %>%
+  ungroup() 
+
+#Reversing the names
+hrs_worked_Summary <- hrs_worked_Summary  %>%
+  mutate(Last.Name = gsub(",.*","",hrs_worked_Summary$Name)) %>%
+  mutate(First.Name = gsub(".*,","",hrs_worked_Summary$Name))
+
+hrs_worked_Summary$First.Name <- as.character(hrs_worked_Summary$First.Name)
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Darlene Ann"] <- "Darlene"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Justin J."] <- "Justin"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Mitchell B."] <- "Mitchell"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Cecilia Mira"] <- "Cecilia"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Damian Michael"] <- "Damian"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Erron Bernard"] <- "Erron"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Jeffrey Donnell"] <- "Jeffrey"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Joseph Scott"] <- "Joseph"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Natalia Alise"] <- "Natalia"
+hrs_worked_Summary$First.Name[hrs_worked_Summary$First.Name == " Nathan Robert"] <- "Nathan"
+hrs_worked_Summary$Last.Name[hrs_worked_Summary$Last.Name == "Mira Pasillas"] <- "Pasillas"
+
+hrs_worked_Summary <- hrs_worked_Summary  %>%
+  mutate(Clean.Name = paste(First.Name,Last.Name,sep=" "))
+
+hrs_worked_Summary <- hrs_worked_Summary  %>%
+  mutate(Agent.Name = str_trim(hrs_worked_Summary$Clean.Name))
+
+hrs_worked_Summary$Agent.Name <- as.character(hrs_worked_Summary$Agent.Name)
+hrs_worked_Summary$Agent.Name[hrs_worked_Summary$Agent.Name == "Jose A. Torres"] <- "Angel Torres"
+hrs_worked_Summary$Agent.Name[hrs_worked_Summary$Agent.Name == "Joshua Gosey"] <- "Josh Gosey"
+hrs_worked_Summary$Agent.Name[hrs_worked_Summary$Agent.Name == "Natalie J. Thomas"] <- "Natalie Thomas"
+hrs_worked_Summary$Agent.Name[hrs_worked_Summary$Agent.Name == "Nathan Zirlen"] <- "Nate Zirlen"
+
+hrs_worked_Summary$Agent.Name <- as.factor(hrs_worked_Summary$Agent.Name)
+
+hrs_worked_Summary$Name <- NULL #Deletes the column
+hrs_worked_Summary$Last.Name <- NULL #Deletes the column
+hrs_worked_Summary$First.Name <- NULL #Deletes the column
+hrs_worked_Summary$Clean.Name <- NULL #Deletes the column
+
+hrs_worked_Summary$Agent.Name <- as.character(hrs_worked_Summary$Agent.Name)
+
+## Combining master report for exporting to Drive
+
+
+rawInviewTeam1 <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Team IB Stats.csv",
+                           header=TRUE,
+                           na.strings=c("","NA"),
+                           stringsAsFactors = FALSE,
+                           skip=5)
+
+rawInviewTeam1 <- rawInviewTeam1 %>%
+  mutate(Agent.Name = X) %>%
+  select(c("Agent.Name","CARE.AHT","AvgQAScore")) %>%
+  mutate(Agent.Name = if_else(grepl("Valenzuela",Agent.Name),"Sharelle Valenzuela",Agent.Name))
+
+# rawInviewTeam1 <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Team Wilkerson IB Stats.csv",
+#                                header=TRUE,
+#                                na.strings=c("","NA"),
+#                                stringsAsFactors = FALSE,
+#                                skip=5)
+
+# ##
+# 
+# rawInviewTeam2 <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Team Dickman IB Stats.csv",
+#                            header=TRUE,
+#                            na.strings=c("","NA"),
+#                            stringsAsFactors = FALSE,
+#                            skip=5)
+# 
+# rawInviewTeam2 <- rawInviewTeam2 %>%
+#   mutate(Tier.1.Team.Dickman = str_trim(Tier.1.Team.Dickman)) %>%
+#   mutate(Agent.Name = Tier.1.Team.Dickman) %>%
+#   select(c("Agent.Name","CARE.AHT","AvgQAScore")) %>%
+#   mutate(Agent.Name = if_else(grepl("Valenzuela",Agent.Name),"Sharelle Valenzuela",Agent.Name))
+# 
+# ##
+# rawInviewTeam3 <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Team Pollard IB Stats.csv",
+#                            header=TRUE,
+#                            na.strings=c("","NA"),
+#                            stringsAsFactors = FALSE,
+#                            skip=5)
+# 
+# rawInviewTeam3 <- rawInviewTeam3 %>%
+#   mutate(Agent.Name = Tier.1.Team.Pollard) %>%
+#   select(c("Agent.Name","CARE.AHT","AvgQAScore"))
+# 
+# ##
+# rawInviewTeam4 <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Team Carter IB Stats.csv",
+#                            header=TRUE,
+#                            na.strings=c("","NA"),
+#                            stringsAsFactors = FALSE,
+#                            skip=5)
+# 
+# rawInviewTeam4 <- rawInviewTeam4 %>%
+#   mutate(Agent.Name = Tier.1.Team.Carter) %>%
+#   select(c("Agent.Name","CARE.AHT","AvgQAScore"))
+# 
+# ##
+# rawInviewTeam5 <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Team Hampton IB Stats.csv",
+#                            header=TRUE,
+#                            na.strings=c("","NA"),
+#                            stringsAsFactors = FALSE,
+#                            skip=5)
+# 
+# rawInviewTeam5 <- rawInviewTeam5 %>%
+#   mutate(Agent.Name = Tier.1.Team.Hampton) %>%
+#   select(c("Agent.Name","CARE.AHT","AvgQAScore"))
+# 
+# ##
+# rawInviewTeam6 <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/Team Rodriguez IB Stats.csv",
+#                            header=TRUE,
+#                            na.strings=c("","NA"),
+#                            stringsAsFactors = FALSE,
+#                            skip=5)
+# 
+# rawInviewTeam6 <- rawInviewTeam6 %>%
+#   mutate(Agent.Name = Tier.1.Team.Rodriguez) %>%
+#   select(c("Agent.Name","CARE.AHT","AvgQAScore"))
+
+##
+InView_Master <- rawInviewTeam1
+# InView_Master <- rbind(InView_Master,rawInviewTeam2)
+# InView_Master <- rbind(InView_Master,rawInviewTeam3)
+# InView_Master <- rbind(InView_Master,rawInviewTeam4)
+# InView_Master <- rbind(InView_Master,rawInviewTeam5)
+# InView_Master <- rbind(InView_Master,rawInviewTeam6)
+
+InView_Master <- InView_Master %>%
+  mutate(Erase = if_else(grepl("Total",Agent.Name),1,0)) %>%
+  subset(Erase==0) %>%
+  mutate(Erase=NULL)
+
+##
+Key_Export <- InView_Master %>%
+  mutate(AvgQAScore = round(AvgQAScore,2)) %>%
+  arrange(Agent.Name) %>%
+  mutate(Agent.Name = if_else(grepl("Valenzuela",Agent.Name),"Sharelle Valenzuela",Agent.Name))
+
+Key_Export <- left_join(Key_Export,hrs_worked_Summary,by="Agent.Name")
+
+Key_Export <- Key_Export %>%
+  select(c("Agent.Name","AvgQAScore","CARE.AHT","Hours.Worked"))
+
+Key_Export <- left_join(Key_Export,Repeat_DailyScorecard,by=c("Agent.Name"="FullName"))
+
+## rolling 30 day call file from InView download
+rawRollingCalls <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/rolling30calls.csv",
+                      header=TRUE,
+                      na.strings=c("","NA"),
+                      stringsAsFactors = FALSE,
+                      skip=5)
+
+rawRollingCalls <- rawRollingCalls %>%
+  mutate(Agent.Name = X) %>%
+  mutate(X=NULL) %>%
+  mutate(Agent.Name = if_else(grepl("Valenzuela",Agent.Name),"Sharelle Valenzuela",Agent.Name))
+
+Key_Export <- left_join(Key_Export,rawRollingCalls,by="Agent.Name")
+
+Key_Export <- Key_Export %>%
+  select(c("Agent.Name","AvgQAScore","CARE.AHT","Hours.Worked","IB.Handled","Repeat.Calls.By.Rep.Total"))
+
+RepData_CMScorecardImport <- Key_Export 
+
+Key_Export <- Key_Export %>%
+  mutate(Repeat.Rate = round(Repeat.Calls.By.Rep.Total/IB.Handled,2)) %>%
+  mutate(Repeat.Calls.By.Rep.Total = NULL)
+
+## Fixing remaining FCR/Case data that was in old rep scorecard...
+CMScorecard_FCR <- Cases_df1 %>%
+  CurrentScorecard_CaseDates() 
+
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By == "Jake Schuetz"] <- "Jacob Schuetz"
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By == "Augie Maestas"] <- "Augustine Maestas"
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By == "Jess Moreno"] <- "Jessy Moreno"
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By == "Danielle Perez Morales"] <- "Danielle Perez"
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By == "Heidi Reyes Lamas"] <- "Heidi Reyes"
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By == "Jess Moreno"] <- "Jessy Moreno"
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By == "Laura Montoya Montes"] <- "Laura Montes"
+CMScorecard_FCR$Case.Created.By[CMScorecard_FCR$Case.Created.By =="Gamaliel Rodriguez-Cruz"] <- "Gamaliel Rodriguez"
+
+CMScorecard_FCR <- left_join(CMScorecard_FCR,Assignments,by=c("Case.Created.By"="Rep.Name"))
+
+CMScorecard_FCR <- CMScorecard_FCR %>%
+  subset(!is.na(SSN)) %>%
+  mutate(Open.Dt = as.Date(CreatedDate)) %>%
+  mutate(Closed.Dt = as.Date(ClosedDate)) %>%
+  mutate(SameDayClose = if_else(Open.Dt == Closed.Dt,1,0)) %>%
+  mutate(RepOwner = ifelse(Case.Created.By==CaseOwnerName,1,0)) 
+
+##...quick review of cases opened and assigned to Tier 1
+Tier1OwnedCases <- CMScorecard_FCR %>%
+  subset(RepOwner==1) %>%
+  mutate(ClosedStatus = if_else(!is.na(Closed.Dt),1,0))
+
+Tier1OwnedOpenCases <- Tier1OwnedCases %>%
+  subset(ClosedStatus==0) 
+
+Tier1OwnedOpenCasesSummary <- Tier1OwnedOpenCases %>%
+  group_by(Case.Created.By) %>%
+  summarize(Tier1OpenOwners = n()) %>%
+  arrange(Tier1OpenOwners)
+
+
+##...back to rep scorecard
+CMScorecard_FCR <- CMScorecard_FCR %>%
+  mutate(FCR = if_else(is.na(Closed.Dt),0,
+                       if_else(SameDayClose==1 & RepOwner==1 & is.na(Compensated),1,0))) %>%
+  group_by(Case.Created.By,FCR) %>%
+  summarize(FCR.Totals = as.numeric(n())) %>%
+  ungroup() %>%
+  mutate(Total.Cases = if_else(lag(Case.Created.By)==Case.Created.By,lag(FCR.Totals)+FCR.Totals,999)) %>%
+  subset(FCR==1) %>%
+  mutate(FCR=NULL) %>%
+  mutate(Agent.Name=Case.Created.By) %>%
+  mutate(FCR = FCR.Totals) %>%
+  mutate(FCR.Totals=NULL) %>%
+  mutate(Case.Created.By=NULL)
+
+
+##
+RepData_CMScorecardExport <- Repeat_DailyScorecard
+RepData_CMScorecardExport <- left_join(RepData_CMScorecardExport,Key_Export,by=c("FullName"="Agent.Name"))
+RepData_CMScorecardExport <- left_join(RepData_CMScorecardExport,CMScorecard_FCR,by=c("FullName"="Agent.Name"))
+
+RepData_CMScorecardExport <- RepData_CMScorecardExport %>%
+  mutate(Repeat.Calls = Repeat.Calls.By.Rep.Total) %>%
+  mutate(Rolling.Inbound.Handled = IB.Handled) %>%
+  mutate(Agent.Name = FullName) %>%
+  subset(!is.na(Assigned.CM)) %>%
+  mutate(Dup.Rep = if_else(duplicated(FullName,fromLast = FALSE),1,0)) %>%
+  subset(Dup.Rep==0) %>%
+  mutate(Dup.Rep=NULL) %>%
+  select(c("Assigned.CM","Agent.Name","Repeat.Calls","FCR","Total.Cases","Rolling.Inbound.Handled")) %>%
+  arrange(Assigned.CM)
+
+
+
+## Master Table Build ----------------------------------
+
+Master_Call_Info <- Unique_Callers_By_Month 
+
+Master_Call_Info <- left_join(Master_Call_Info,Monthly_Documentation_Count,
+                              by=c("Call.Month","Documented.Call.Total"="Documentation.Count"))
+
+Master_Call_Info <- Master_Call_Info %>%
+  subset(Call.Month>="2017-01-01") %>%
+  mutate(Difference=NULL) %>%
+  mutate(SpanishSkill = IVRSkill) %>%
+  mutate(IVRSkill=NULL) %>%
+  mutate(Current = if_else(Call.Month==CurrentMonth,"x","NA"))
+
+
+## 10-Day Daily Repeat Call Report ----------------------------------
+
+Daily_10_Day_RCs <- Repeat_30_Minus_VCB %>%
+  subset(Distance<=10) %>%
+  filter(ActivityCreatedOnDate>=Ten_Days & ActivityCreatedOnDate<=Stopping_Date) %>%
+  mutate(Dup.ANI = if_else(findDup(ActivityANI),1,0)) %>%
+  mutate(ServiceTransfer = if_else(CaseReason=="Service Transfer" & Dup.ANI==1,1,0)) %>%
+  arrange(ContractID,ActivityCreatedOnDate,ActivityTime)
+
+ServiceTransfer_10Day_RCs <- Daily_10_Day_RCs %>%
+  subset(ServiceTransfer==1)
+
+
+## Repeat Calls By Distances ----------------------------------
+
+Zero_Day_RC <- GrandTotal %>%
+  subset(Distance.Two != "Initial Call") %>%
+  subset(Distance==0)
+
+Yearly_RC <- GrandTotal %>%
+  subset(Distance.Two != "Initial Call") %>%
+  subset(Distance<=365)
+
+Yearly_RC_Summary <- Yearly_RC %>%
+  group_by(Call.Month,Distance) %>%
+  summarize(Repeat.Totals = n()) %>%
+  subset(Call.Month>="2018-01-01") %>%
+  arrange(desc(Distance))
+
+
+
+## Brightbox Repeat & Regular Calls  ----------------------------------
+
+BrightboxCalls_df1 <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  mutate(BrightBox = if_else(is.na(BrightBox),"0",BrightBox)) %>%
+  mutate(BrightBox = as.numeric(BrightBox)) %>%
+  group_by(Call.Month,BrightBox) %>%
+  summarize(Total.Calls = as.numeric(n())) %>%
+  subset(Call.Month>="2018-01-01") %>%
+  ungroup() %>%
+  mutate(No.Box = if_else(lead(Call.Month)==Call.Month & BrightBox==0,
+                          Total.Calls,0)) %>%
+  mutate(Has.Box = if_else(BrightBox==1,Total.Calls,0)) %>%
+  mutate(Has.Box = if_else(lead(Call.Month)==Call.Month & Has.Box==0,
+                           lead(Total.Calls),Has.Box)) %>%
+  subset(BrightBox==0) %>%
+  mutate(BrightBox=NULL) %>%
+  mutate(Total.Calls=NULL) %>%
+  mutate(Call.Totals = No.Box+Has.Box)
+
+Brightbox_Repeats <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  mutate(BrightBox = if_else(is.na(BrightBox),"0",BrightBox)) %>%
+  mutate(BrightBox = as.numeric(BrightBox)) %>%
+  subset(BrightBox==1) %>%
+  subset(Distance<=30) %>%
+  group_by(Call.Month) %>%
+  summarize(Total.Repeats = n()) %>%
+  filter(Call.Month>="2018-01-01" & Call.Month<CurrentMonth)
+
+Brightbox_Repeats <- left_join(Brightbox_Repeats,BrightboxCalls_df1,
+                                    by="Call.Month")
+
+Brightbox_Repeats <- Brightbox_Repeats %>%
+  mutate(Brightbox.Repeats.Of.BB.Calls = round(Total.Repeats/Has.Box,2)) %>%
+  mutate(Percent.Of.Total.Calls = round(Has.Box/Call.Totals,2)) %>%
+  select(c("Call.Month","Call.Totals","No.Box","Has.Box","Total.Repeats",
+           "Percent.Of.Total.Calls","Brightbox.Repeats.Of.BB.Calls"))
+
+## BB NPS
+
+BrightboxUniqueWithNPS_df1 <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  mutate(BrightBox = if_else(is.na(BrightBox),"0",BrightBox)) %>%
+  mutate(BrightBox = as.numeric(BrightBox)) %>%
+  subset(Dup.Contract==0) %>%
+  subset(BrightBox==1)
+
+##
+
+BrightboxUniqueWithNPS_df2 <- BrightboxUniqueWithNPS_df1 %>%
+  mutate()
+
+BrightboxUniqueWithNPS_df2 <- left_join(BrightboxUniqueWithNPS_df2,NPS_df1,by=c("ContractName"="Contract.Name"))
+
+## Baseline for BB relative to those who took any NPS (regardless if they called in)
+BrightBox_NPS_Baseline <- rawSC %>%
+  mutate(BrightBox = as.numeric(BrightBox)) %>%
+  subset(BrightBox==1) %>%
+  subset(!is.na(PTODate))
+
+BrightBox_NPS_Baseline <- left_join(BrightBox_NPS_Baseline,NPS_df1,by=c("ContractName"="Contract.Name"))
+
+BrightBox_NPS_Baseline <- BrightBox_NPS_Baseline %>%
+  mutate(Participate.New = if_else(!is.na(Survey.Subtype),1,0)) %>%
+  mutate(Participate.100Day = if_else(!is.na(Existing.Customer.Response),1,0)) %>%
+  mutate(Participate.1Year = if_else(!is.na(OneYearPlus.Customer.Response),1,0)) %>%
+  mutate(Participated = if_else(Participate.New+Participate.100Day+Participate.1Year>0,1,0))
+
+BrightBox_NPS_ParticipationRates <- BrightBox_NPS_Baseline %>%
+  group_by(Participated) %>%
+  summarize(Totals = n())
+
+BrightBox_NPS_Baseline <- BrightBox_NPS_Baseline %>%
+  subset(Participated==1) 
+
+
+
+## Brightbox Enquiries for BB from Current Non-BB  ----------------------------------
+
+Fleet_BrightBox <- rawSC %>%
+  subset(BrightBox==1) %>%
+  subset(!is.na(PTODate))
+
+Fleet_Non_BrightBox <- rawSC %>%
+  subset(BrightBox==0) %>%
+  subset(!is.na(PTODate)) %>%
+  select("ContractID")
+
+##
+
+BrightBox_CustInquiry <- left_join(Fleet_Non_BrightBox,Cases_df1,by="ContractID")
+
+BrightBox_CustInquiry <- BrightBox_CustInquiry %>%
+  mutate(BB.Mentioned = if_else(grepl("brightbox",Description,ignore.case = TRUE) |
+                                grepl("battery",Description,ignore.case = TRUE),1,0))
+
+BrightBox_Mentioned <- BrightBox_CustInquiry %>%
+  subset(BB.Mentioned==1) %>%
+  arrange(ContractID)
+
+BrightBox_ActivityMentioned <- left_join(Fleet_Non_BrightBox,Activities_df1,by="ContractID")
+
+BrightBox_ActivityMentioned <- BrightBox_ActivityMentioned %>%
+  mutate(BB.Mentioned = if_else(grepl("brightbox",ActivityNotes,ignore.case = TRUE) |
+                                grepl("battery",ActivityNotes,ignore.case = TRUE),1,0)) %>%
+  subset(BB.Mentioned==1) %>%
+  arrange(ContractID) %>%
+  select(c("ContractID","ActivityId","IVRSkill","ActivityCreatedTime","ActivityCreatedOnDate","ActivityTime","ActivityNotes")) %>%
+  subset(ActivityCreatedOnDate>="2018-09-18")
+
+BrightBox_CustInquiry <- full_join(BrightBox_Mentioned,BrightBox_ActivityMentioned,by="ContractID")
+
+BrightBox_CustInquiry <- BrightBox_CustInquiry %>%
+  mutate(Unique.Customers = if_else(duplicated(ContractID,fromLast=FALSE),0,1)) %>%
+  select(c("ContractID","CaseNumber","CreatedDate","CaseReason","SubsetReason","Description","ActivityId",
+           "ActivityCreatedTime","ActivityNotes","Unique.Customers"))
+
+
+
+## Fire Graphs  ----------------------------------
+
+Fire_df1 <- Activities_df1 %>%
+  mutate(PTODate = as.Date(PTODate)) %>%
+  subset(ActivityCreatedOnDate>="2017-11-01") %>%
+  mutate(LessOrEqual.100 = if_else(ActivityCreatedOnDate<=(PTODate+100),1,0)) %>%
+  mutate(OneHundred.To.Year = if_else(ActivityCreatedOnDate>(PTODate+100) &
+                                        ActivityCreatedOnDate<=(PTODate+365),1,0)) %>%
+  mutate(One.Year.Plus = if_else(ActivityCreatedOnDate>(PTODate+365),1,0)) %>%
+  mutate(One.Hundred.Call.Distance = if_else(LessOrEqual.100==1,(ActivityCreatedOnDate-PTODate),999)) %>%
+  mutate(One.Year.Call.Distance = if_else(OneHundred.To.Year==1,(ActivityCreatedOnDate-PTODate),999)) %>%
+  mutate(Plus.One.Year.Call.Distance = if_else(One.Year.Plus==1,(ActivityCreatedOnDate-PTODate),999))
+
+Fire_df1$One.Hundred.Call.Distance <- as.character(Fire_df1$One.Hundred.Call.Distance)
+Fire_df1$One.Year.Call.Distance <- as.character(Fire_df1$One.Year.Call.Distance)
+Fire_df1$Plus.One.Year.Call.Distance <- as.character(Fire_df1$Plus.One.Year.Call.Distance)
+
+Fire_df1 <- Fire_df1 %>%
+  mutate(One.Hundred.Call.Distance = if_else(One.Hundred.Call.Distance=="999","No Call",One.Hundred.Call.Distance)) %>%
+  mutate(One.Year.Call.Distance = if_else(One.Year.Call.Distance=="999","No Call",One.Year.Call.Distance)) %>%
+  mutate(Plus.One.Year.Call.Distance = if_else(Plus.One.Year.Call.Distance=="999","No Call",Plus.One.Year.Call.Distance))
+
+Fire_df1$One.Hundred.Distance.Sort <- as.numeric(Fire_df1$One.Hundred.Call.Distance) 
+Fire_df1$One.Year.Call.Distance.Sort <- as.numeric(Fire_df1$One.Year.Call.Distance) 
+Fire_df1$Plus.One.Year.Call.Distance.Sort <- as.numeric(Fire_df1$Plus.One.Year.Call.Distance) 
+
+Fire_df2 <- Fire_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  group_by(Call.Month,LessOrEqual.100,OneHundred.To.Year,One.Year.Plus) %>%
+  summarize(Totals = as.numeric(sum(n()))) %>%
+  ungroup() %>%
+  mutate(LessOrEqual.100 = if_else(LessOrEqual.100==1,Totals,0)) %>%
+  mutate(OneHundred.To.Year = if_else(OneHundred.To.Year==1,Totals,0)) %>%
+  mutate(One.Year.Plus = if_else(One.Year.Plus==1,Totals,0))
+
+Fire_df2[is.na(Fire_df2)] <- 0
+
+Fire_Master <- Fire_df2 %>%
+  group_by(Call.Month) %>%
+  summarize(LessOrEqual.100=sum(LessOrEqual.100),
+            OneHundred.To.Year=sum(OneHundred.To.Year),
+            One.Year.Plus=sum(One.Year.Plus)) %>%
+  ungroup()
+
+Fire_Master <- left_join(Fire_Master,Monthly_Handled_df1,by=c("Call.Month"="Text.Month"))
+
+Fire_Master <- Fire_Master %>%
+  mutate(Unknown = (Handled.Calls - (LessOrEqual.100+OneHundred.To.Year+One.Year.Plus))) %>%
+  mutate(LessorEqual.Percent = round(LessOrEqual.100/Handled.Calls,2)) %>%
+  mutate(OneHundred.To.Year.Percent = round(OneHundred.To.Year/Handled.Calls,2)) %>%
+  mutate(One.Year.Plus.Percent = round(One.Year.Plus/Handled.Calls,2)) %>%
+  mutate(Unknown.Percent = if_else(1-(LessorEqual.Percent+OneHundred.To.Year.Percent+One.Year.Plus.Percent)>1,1,
+                                   1-(LessorEqual.Percent+OneHundred.To.Year.Percent+One.Year.Plus.Percent)))
+
+
+
+## unique fire graph
+Fire_Master_Unique <- Fire_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  arrange(ContractID,ActivityCreatedTime) %>%
+  mutate(WTF = if_else(lead(ActivityCreatedTime)==ActivityCreatedTime,"WTF","OK")) %>%
+  subset(WTF!="WTF") %>%
+  arrange(ContractID,ActivityCreatedTime) %>%
+  mutate(Uniques = if_else(duplicated(ContractID,fromLast = TRUE)==FALSE,1,0)) %>%
+  mutate(Unique.By.Month = if_else(lead(ContractID)==ContractID & lead(Call.Month)!=Call.Month,
+                                   1,Uniques)) %>%
+  subset(Unique.By.Month==1) %>%
+  group_by(Call.Month,LessOrEqual.100,OneHundred.To.Year,One.Year.Plus) %>%
+  summarize(Totals = as.numeric(sum(n()))) %>%
+  ungroup() %>%
+  mutate(LessOrEqual.100 = if_else(LessOrEqual.100==1,Totals,0)) %>%
+  mutate(OneHundred.To.Year = if_else(OneHundred.To.Year==1,Totals,0)) %>%
+  mutate(One.Year.Plus = if_else(One.Year.Plus==1,Totals,0)) %>%
+  mutate(Unknown = if_else(is.na(LessOrEqual.100),Totals,0)) %>%
+  mutate(Totals=NULL) %>%
+  ungroup()
+
+Fire_Master_Unique[is.na(Fire_Master_Unique)] <- 0
+
+Fire_Master_Unique <- Fire_Master_Unique %>%
+  group_by(Call.Month) %>%
+  summarize(LessOrEqual.100=sum(LessOrEqual.100),
+            OneHundred.To.Year=sum(OneHundred.To.Year),
+            One.Year.Plus=sum(One.Year.Plus),
+            Unknown=sum(Unknown)) %>%
+  ungroup()
+
+Fire_Master_Unique <- Fire_Master_Unique %>%
+  mutate(LessorEqual.Percent = round(LessOrEqual.100/(LessOrEqual.100+OneHundred.To.Year+One.Year.Plus+Unknown),2)) %>%
+  mutate(OneHundred.To.Year.Percent = round(OneHundred.To.Year/(LessOrEqual.100+OneHundred.To.Year+One.Year.Plus+Unknown),2)) %>%
+  mutate(One.Year.Plus.Percent = round(One.Year.Plus/(LessOrEqual.100+OneHundred.To.Year+One.Year.Plus+Unknown),2)) %>%
+  mutate(Unknown.Percent = if_else(1-(LessorEqual.Percent+OneHundred.To.Year.Percent+One.Year.Plus.Percent)>1,1,
+                                   1-(LessorEqual.Percent+OneHundred.To.Year.Percent+One.Year.Plus.Percent)))
+
+
+
+## FS 100 Day Call Volume 
+FS_Calls_df1 <- Fire_df1 %>%
+  subset(CaseRecordTypeId=="01260000000UGuiAAG") %>%
+  subset(!is.na(One.Hundred.Distance.Sort)) %>%
+  group_by(ActivityCreatedOnDate) %>%
+  summarize(Total.Calls = n()) %>%
+  ungroup() %>%
+  subset(ActivityCreatedOnDate>="2017-07-01")
+
+
+## % of caller cohorts out of possible caller cohorts 'Fleet_Summary_df2'
+## subcohorting for PTO distance callers
+Fire_Callers_ByCohort <- Fire_df1 %>%
+  ungroup() %>%
+  subset(!is.na(PTODate)) %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  group_by(Call.Month) %>%
+  summarize(UnderHundred = sum(LessOrEqual.100),
+            HundredtoYear = sum(OneHundred.To.Year),
+            OverOneYear = sum(One.Year.Plus)) %>%
+  ungroup()
+
+Fire_Callers_ByCohort_Between <- Fire_Callers_ByCohort
+
+Fire_Callers_ByCohort <- Fire_Callers_ByCohort %>%
+  filter(Call.Month>="2018-01-01") %>%
+  subset(Call.Month<"2019-01-01")
+
+## EDIT 'Binary Fleet Potentials' before updating this...
+Fire_Callers_ByCohort <- left_join(Fire_Callers_ByCohort,Fleet_Summary_df2,
+                                   by=c("Call.Month"="Possible.Cohort.Total"))
+
+Fire_Callers_ByCohort <- Fire_Callers_ByCohort %>%
+  mutate(Baseline.Under100 = FleetBaseline) %>%
+  mutate(FleetBaseline=NULL)
+
+Fire_Callers_ByCohort_Between <- Fire_Callers_ByCohort_Between %>%
+  filter(Call.Month>="2017-01-01") %>%
+  subset(Call.Month<"2019-01-01")
+
+Fire_Callers_ByCohort <- left_join(Fire_Callers_ByCohort,Fleet_SummaryBetween_df2,
+                                   by=c("Call.Month"="Possible.Cohort.Total"))
+
+Fire_OneYear <- Fleet_Growth %>%
+  subset(PTO.Month>="2018-01-01") %>%
+  select(c("PTO.Month","Cumulative")) %>%
+  mutate(Call.Month = PTO.Month) %>%
+  mutate(PTO.Month = NULL) %>%
+  mutate(OverOneYearBaseline = Cumulative) %>%
+  mutate(Cumulative=NULL)
+
+Fire_Callers_ByCohort <- left_join(Fire_Callers_ByCohort,Fire_OneYear,by="Call.Month")
+
+Fire_Callers_ByCohort <- Fire_Callers_ByCohort %>%
+  mutate(Percent.Under100 = round(UnderHundred/Baseline.Under100,2)) %>%
+  mutate(Percent.Between = round(HundredtoYear/FleetBaseline.Between,2)) %>%
+  mutate(Percent.OverOneYear = round(OverOneYear/OverOneYearBaseline,2))
+
+## unique By Cohort
+Fire_UniqueCallers_ByCohort <- Fire_Master_Unique %>%
+  select(c("Call.Month","LessOrEqual.100","OneHundred.To.Year","One.Year.Plus")) %>%
+  mutate(UnderHundred = LessOrEqual.100) %>%
+  mutate(HundredtoYear = OneHundred.To.Year) %>%
+  mutate(OverOneYear = One.Year.Plus) %>%
+  mutate(LessOrEqual.100 = NULL) %>%
+  mutate(OneHundred.To.Year = NULL) %>%
+  mutate(One.Year.Plus = NULL)
+  
+Fire_UniqueCallers_ByCohort <- left_join(Fire_UniqueCallers_ByCohort,Fleet_Summary_df2,
+                                   by=c("Call.Month"="Possible.Cohort.Total"))
+
+Fire_UniqueCallers_ByCohort <- Fire_UniqueCallers_ByCohort %>%
+  mutate(Baseline.Under100 = FleetBaseline) %>%
+  mutate(FleetBaseline=NULL)
+
+Fire_UniqueCallers_ByCohort <- left_join(Fire_UniqueCallers_ByCohort,Fleet_SummaryBetween_df2,
+                                   by=c("Call.Month"="Possible.Cohort.Total"))
+
+Fire_UniqueCallers_ByCohort <- left_join(Fire_UniqueCallers_ByCohort,Fire_OneYear,by="Call.Month")
+
+Fire_UniqueCallers_ByCohort <- Fire_UniqueCallers_ByCohort %>%
+  filter(Call.Month>="2018-01-01" & Call.Month<"2019-01-01") %>%
+  mutate(Percent.Under100 = round(UnderHundred/Baseline.Under100,2)) %>%
+  mutate(Percent.Between = round(HundredtoYear/FleetBaseline.Between,2)) %>%
+  mutate(Percent.OverOneYear = round(OverOneYear/OverOneYearBaseline,2))
+
+
+
+## Audit: 100 Day IVR   ----------------------------------
+
+#temp_100Day <- read.csv("C:/Users/eric.reschke/Desktop/R/Repeats/raw/NPS 100 10_15.csv",header=TRUE)
+
+#temp_100Day <- temp_100Day %>%
+#  mutate(Contact_ID = as.character(Contact_ID))
+
+#temp_100Day_df2 <- left_join(temp_100Day,Activities_df1,by=c("Contact_ID"="InContactContactID"))
+
+#temp_100Day_df2 <- temp_100Day_df2 %>%
+#  mutate(PTODate = as.Date(PTODate)) %>%
+#  mutate(PTODistance = as.numeric((Sys.Date()-1)-PTODate)) %>%
+#  mutate(PTODistance = if_else(is.na(PTODistance),-999,PTODistance)) %>%
+#  subset(PTODistance>100)
+
+
+
+## Savings Cases ----------------------------------
+
+SavingsCalls_df1 <- Activities_df1 %>%
+  mutate(Keep.Savings = if_else(grepl("Saving",ActivityReason) | grepl("Saving",CaseReason),1,0)) %>%
+  subset(Keep.Savings==1) %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  mutate(PTO.Plus.100 = as.Date(PTODate+100)) %>%
+  mutate(One.Hundred.Day.Status = if_else(ActivityCreatedOnDate<=PTO.Plus.100,1,0)) 
+
+SavingsCalls_DataTable <- SavingsCalls_df1 %>%
+  mutate(PTO.Month = as.Date(as.yearmon(PTODate)))
+
+SavingsCalls_DataTable <- SavingsCalls_DataTable %>%
+  mutate(System.Size.DC = round(as.numeric(System_Size_DC__c),0)) %>%
+  mutate(System.Size.Grouping = if_else(System.Size.DC<=5,"1-5",
+                                        if_else(System.Size.DC>5 & System.Size.DC <=10,"6-10",
+                                                if_else(System.Size.DC>10 & System.Size.DC<=15,"11-15",
+                                                        if_else(System.Size.DC>15 & System.Size.DC<=20,"16-20","21+")))))
+
+##
+## Savings QoQ
+
+SavingsCalls_df1 <- SavingsCalls_df1 %>%
+  group_by(Call.Month) %>%
+  summarize(Total.Savings.Calls = n()) %>%
+  ungroup() %>%
+  subset(Call.Month>="2017-01-01") %>%
+  mutate(Quarter = as.yearqtr(Call.Month, format = "%Y-%m-%d")) %>%
+  group_by(Quarter) %>%
+  summarize(Total.Savings.Calls=sum(Total.Savings.Calls))
+
+Fleet_Quarterly_Growth <- SC_df1 %>%
+  subset(!is.na(PTODate)) %>%
+  mutate(PTO.Month = as.Date(as.yearmon(PTODate))) %>%
+  group_by(PTO.Month) %>%
+  summarize(Fleet.Growth = n()) %>%
+  ungroup() %>%
+  mutate(Cumulative = cumsum(Fleet.Growth)) %>%
+  mutate(Quarter = as.yearqtr(PTO.Month, format = "%Y-%m-%d")) %>%
+  group_by(Quarter) %>%
+  summarize(Fleet.Totals = sum(Fleet.Growth)) %>%
+  ungroup() %>%
+  mutate(Fleet.Growth.By.Quarter = cumsum(Fleet.Totals)) %>%
+  mutate(Fleet.Totals=NULL)
+
+SavingsCall_Summary <- left_join(SavingsCalls_df1,Fleet_Quarterly_Growth,by="Quarter")
+
+SavingsCall_Summary <- SavingsCall_Summary %>%
+  mutate(Percent.Of.Fleet = round(Total.Savings.Calls/Fleet.Growth.By.Quarter,2)) %>%
+  mutate(Quarter = as.character(Quarter))
+
+## Graph - Savings QoQ
+
+SavingsQoQChart <- ggplot(SavingsCall_Summary, aes(x=SavingsCall_Summary$Quarter,
+                                y=SavingsCall_Summary$Total.Savings.Calls)) + 
+  geom_bar(stat="identity",color="black") + 
+  xlab("By Quarter") + ylab("Savings Calls") + 
+  scale_fill_manual();
+    
+
+SavingsQoQChart <- ggplotly(SavingsQoQChart);
+
+
+
+
+
+
+##
+## Savings Calls By Month
+
+Savings_Monthly <- SavingsCalls_DataTable %>%
+  group_by(Call.Month) %>%
+  summarize(Savings.Call.Totals = n())
+
+Savings_Monthly <- left_join(Savings_Monthly,Monthly_Handled_df1,by=c("Call.Month"="Text.Month"))
+
+Savings_Monthly <- Savings_Monthly %>%
+  subset(Call.Month>="2017-01-01") %>%
+  mutate(Percent.Of.Handled = round(Savings.Call.Totals/Handled.Calls,2))
+
+Savings_Monthly_Unique <- SavingsCalls_DataTable %>%
+  arrange(ContractName,ActivityCreatedTime) %>%
+  mutate(Dups = if_else(lead(ContractName)==ContractName & lead(Call.Month)==Call.Month,1,0)) %>%
+  subset(Dups==0) %>%
+  group_by(Call.Month) %>%
+  summarize(Total.Unique.Callers = n()) %>%
+  mutate(Quarter = as.yearqtr(Call.Month, format = "%Y-%m-%d")) 
+
+Savings_Monthly_Unique <- left_join(Savings_Monthly_Unique,Monthly_Handled_df1,by=c("Call.Month"="Text.Month"))
+
+Savings_Monthly_Unique <- Savings_Monthly_Unique %>%
+  subset(Call.Month>="2017-01-01") %>%
+  mutate(Percent.Of.Handled = round(Total.Unique.Callers/Handled.Calls,2))
+
+
+##
+## Savings Calls By PTO Cohort
+
+Savings_PTOCohort <- SavingsCalls_DataTable %>%
+  group_by(PTO.Month) %>%
+  summarize(Savings.By.PTO.Cohort = n()) %>%
+  subset(!is.na(PTO.Month)) %>%
+  mutate(Quarter = as.yearqtr(PTO.Month, format = "%Y-%m-%d")) 
+
+
+##
+## Savings Calls By NPS type
+
+Savings_NPS <- SavingsCalls_DataTable %>%
+  arrange(ContractID,ActivityCreatedTime) %>%
+  mutate(Unique = if_else(duplicated(ContractID,fromLast = TRUE),1,0)) %>%
+  subset(Unique==1)
+
+Savings_NPS <- left_join(SavingsCalls_DataTable,NPS_df1,by=c("ContractName"="Contract.Name"))
+
+# ---
+
+Savings_NPS_100Day_Monthly <- Savings_NPS %>%
+  subset(!is.na(Existing.Customer.Response)) %>%
+  mutate(CSAT.Score.Grouping = if_else(CSAT.Survey.Response>=9,"Promoter",
+                                       if_else(CSAT.Survey.Response>=7 & CSAT.Survey.Response <=8,"Passive","Detractor"))) %>%
+  group_by(PTO.Month,CSAT.Score.Grouping) %>%
+  summarize(Totals = n(),
+            Average = round(mean(CSAT.Survey.Response),1),
+            Median = median(CSAT.Survey.Response)) %>%
+  ungroup() %>%
+  subset(PTO.Month>="2017-01-01") %>%
+  arrange(PTO.Month)
+
+Savings_NPS_100Day_TraditionalScore <- Savings_NPS %>%
+  subset(!is.na(Existing.Customer.Response)) %>%
+  group_by(PTO.Month) %>%
+  summarize(Totals = n(),
+            NPS.Score = round(mean(NPS.Value)*100,0)) %>%
+  ungroup() %>%
+  subset(PTO.Month>="2017-01-01") %>%
+  arrange(PTO.Month)
+
+Savings_NPS_NewCustomer_Monthly <- Savings_NPS %>%
+  subset(Survey.Subtype=="New Customer") %>%
+  mutate(CSAT.Score.Grouping = if_else(CSAT.Survey.Response>=9,"Promoter",
+                                       if_else(CSAT.Survey.Response>=7 & CSAT.Survey.Response <=8,"Passive","Detractor"))) %>%
+  group_by(PTO.Month,CSAT.Score.Grouping) %>%
+  summarize(Totals = n(),
+            Average = round(mean(CSAT.Survey.Response),1),
+            Median = median(CSAT.Survey.Response)) %>%
+  ungroup() %>%
+  subset(PTO.Month>="2017-01-01") %>%
+  arrange(PTO.Month)
+
+
+##
+## Savings Calls By System Size
+
+Savings_SystemSize <- SavingsCalls_DataTable %>%
+  group_by(System.Size.Grouping) %>%
+  summarize(Total.Savings.Calls = n()) %>%
+  subset(!is.na(System.Size.Grouping))
+
+Fleet_System_Size <- SC_df1 %>%
+  subset(!is.na(PTODate)) %>%
+  mutate(System.Size.DC = round(as.numeric(System_Size_DC__c),0)) %>%
+  mutate(System.Size.Grouping = if_else(System.Size.DC<=5,"1-5",
+                                        if_else(System.Size.DC>5 & System.Size.DC <=10,"6-10",
+                                                if_else(System.Size.DC>10 & System.Size.DC<=15,"11-15",
+                                                        if_else(System.Size.DC>15 & System.Size.DC<=20,"16-20","21+"))))) %>%
+  group_by(System.Size.Grouping) %>%
+  summarize(Fleet.Group.Counts = n()) %>%
+  subset(!is.na(System.Size.Grouping))
+
+Savings_SystemSize <- left_join(Savings_SystemSize,Fleet_System_Size,
+                                by="System.Size.Grouping")
+
+Savings_SystemSize <- Savings_SystemSize %>%
+  mutate(Percent.Of.Active.Fleet = round(Total.Savings.Calls/Fleet.Group.Counts,2))
+
+##
+## Savings Calls By PTO Distance
+
+Savings_PTODistance <- SavingsCalls_DataTable %>%
+  arrange(ContractID) %>%
+  subset(!is.na(PTODate)) %>%
+  mutate(PTODate = as.Date(PTODate)) %>%
+  mutate(Distance.From.PTO = ActivityCreatedOnDate-PTODate)
+
+Savings_PTODistance_Summary <- Savings_PTODistance %>%
+  subset(Distance.From.PTO>=0) %>%
+  subset(Call.Month>="2017-01-01") %>%
+  group_by(Call.Month) %>%
+  summarize(Avg.Distance.From.PTO = round(mean(Distance.From.PTO),0),
+            Median.Distance.From.PTO = round(median(Distance.From.PTO),0))
+
+
+##
+## Savings Calls By Metro-Market
+
+Savings_MetroMarket <- SavingsCalls_DataTable %>%
+  subset(ActivityCreatedTime>="2017-01-01") %>%
+  group_by(State) %>%
+  summarize(Total.Calls.By.State = n()) %>%
+  ungroup() %>%
+  mutate(State = if_else(is.na(State),"No data on file",State)) %>%
+  arrange(desc(Total.Calls.By.State)) %>% ##
+  mutate(Cumulative = cumsum(Total.Calls.By.State)) %>%
+  mutate(CumPercent= round(Cumulative/sum(Total.Calls.By.State),2)) %>%
+  mutate(State = if_else(CumPercent>=0.98,"Others",State)) %>%
+  ungroup() %>%
+  group_by(State) %>%
+  summarize(Savings.Call.Totals=sum(Total.Calls.By.State)) %>%
+  arrange(desc(Savings.Call.Totals)) %>%
+  mutate(Cumulative = cumsum(Savings.Call.Totals)) %>%
+  mutate(CumulativePercent= round(Cumulative/sum(Savings.Call.Totals),2))
+
+## Fleet total by state to join with savings by state table
+
+Fleet_By_State <- rawSC %>%
+  subset(!is.na(PTODate)) %>%
+  subset(!is.na(State)) %>%
+  mutate(State = toupper(State)) %>%
+  group_by(State) %>%
+  summarize(Total.Fleet.Size.By.State = n())
+
+Savings_MetroMarket <- left_join(Savings_MetroMarket,Fleet_By_State,by="State")
+
+## break out CA from above...
+
+Savings_California_DataTable <- SavingsCalls_DataTable %>%
+  subset(!is.na(PTODate)) %>%
+  subset(!is.na(State)) %>%
+  mutate(State = toupper(State)) %>%
+  subset(State=="CA")
+
+Savings_California_ByUtility <- Savings_California_DataTable %>%
+  group_by(State,Utility) %>%
+  summarize(CA.Utility.Calls = n()) %>%
+  arrange(desc(CA.Utility.Calls))
+
+Savings_California_ByCounty <- Savings_California_DataTable %>%
+  group_by(Latitude,County) %>%
+  summarize(CA.County.Calls = n()) %>%
+  arrange(desc(CA.County.Calls)) %>%
+  ungroup() %>%
+  mutate(Percent.of.Total = round(CA.County.Calls/sum(CA.County.Calls),2))
+
+Savings_California_BySystemSize<- Savings_California_DataTable %>%
+  group_by(State,System.Size.Grouping) %>%
+  summarize(CA.SystemSize.Calls = n()) %>%
+  arrange(desc(CA.SystemSize.Calls)) %>%
+  ungroup() %>%
+  mutate(Cumulative = cumsum(CA.SystemSize.Calls)) %>%
+  mutate(Cumulative.Percent = round(Cumulative/sum(CA.SystemSize.Calls),2))
+  
+
+## Bubble Graph for 'Savings_California_ByCounty'
+
+Savings_California_ByCountySummary <- Savings_California_ByCounty %>%
+  group_by(County) %>%
+  summarize(CA.County.Calls=as.numeric(n())) %>%
+  ungroup() %>%
+  arrange(desc(CA.County.Calls))
+
+CA_County_BubbleChart <- plot_ly(Savings_California_ByCountySummary, 
+                                 x = ~County, y = ~CA.County.Calls, 
+             text = ~CA.County.Calls, type = 'scatter', mode = 'markers', size = ~CA.County.Calls, 
+             color = ~County, colors = 'Paired',
+             marker = list(opacity = 0.5, sizemode = 'diameter')) %>%
+  layout(title = 'Savings Calls By California County',
+         xaxis = list(showgrid = FALSE),
+         yaxis = list(showgrid = FALSE),
+         showlegend = FALSE)
+
+CA_County_BubbleChart
+
+## Map by county
+
+CA_Map_Data <- Savings_California_DataTable %>%
+  subset(!is.na(ContractID)) %>%
+  subset(Longitude!=0.00000) %>%
+  subset(Longitude<=0) %>%
+  mutate(long = Longitude) %>%
+  mutate(lat = Latitude) %>%
+  group_by(lat,long,State,County) %>%
+  summarize(StateCountyCallTotals = n()) %>%
+  ungroup() %>%
+  mutate(region = as.character(State)) %>%
+  mutate(value = "") %>%  
+  mutate(group = "") %>%
+  mutate(State = tolower(State)) %>%
+  mutate(region = tolower(region))
+
+#map(database = 'county', regions = 'california')
+#points(x = CA_Map_Data$long, y = CA_Map_Data$lat, pch = 19, col = 'red')
+#title(main = "Savings Calls By California County")
+#text(x = CA_Map_Data$long, y = CA_Map_Data$lat, labels = CA_Map_Data$County, pos = 2)
+
+#cali <- ggplot(filter(CA_Map_Data, region == "ca")) +
+#  coord_map() + ggthemes::theme_map()
+#
+#cali_graph <- geom_polygon(aes(long, lat, group=group, fill = StateCountyCallTotals),
+#                           color = NULL, size = 0.2,inherit.aes = FALSE)
+#cali + cali_graph
+
+#cali_map <- map_data(CA_Map_Data,county=County)
+#cali_graph <- ggplot(CA_Map_Data, aes(x=lat, y=long, group=group, fill=region)) +
+#  geom_polygon(colour="black") +
+#  scale_fill_brewer(palette="Set2")
+#
+#cali_graph
+
+
+## --
+## Savings / MSR
+
+Savings_Cases_df1 <- Cases_df1 %>%
+  subset(grepl("Saving",CaseReason))
+
+Savings_Cases_df1 <- left_join(Savings_Cases_df1,rawSC,by="ContractID")
+
+Savings_Cases_df1 <- Savings_Cases_df1 %>%
+  arrange(ContractID) %>%
+  mutate(Create.Date.Month = substr(CreatedDate,1,10)) %>%
+  mutate(Create.Date.Month = as.Date(as.yearmon((Create.Date.Month))))
+
+## some NA's in the above DF ContractID; can subset them away and send for better data if needed
+
+## --
+## Oppty ID of savings calc users
+rawSavingsMSR <- read.csv("C:/Users/eric.reschke/Desktop/R/Savings/raw/mysunrun savings calc users.csv",
+                        header=TRUE,
+                        stringsAsFactors = FALSE)
+
+Savings_MSR_df1 <- rawSavingsMSR 
+
+Savings_MSR_df1 <- Savings_MSR_df1 %>%
+  mutate(MSR.Used.Date = substr(create_date,1,10)) %>%
+  mutate(MSR.Used.Date = as.Date(MSR.Used.Date)) %>%
+  mutate(create_date=NULL)
+
+Savings_MSR_df1 <- left_join(Savings_MSR_df1,Savings_Cases_df1,by=c("oppty_id"="OpportunityID"))
+
+##
+
+Savings_MSR_df2 <- Savings_MSR_df1 %>%
+  arrange(ContractID) %>%
+  mutate(MSR.Used.Month = as.Date(as.yearmon(MSR.Used.Date))) %>%
+  mutate(CaseCreated = if_else(!is.na(CaseReason),1,0)) 
+
+Savings_MSR_Summary <- Savings_MSR_df2 %>%
+  group_by(MSR.Used.Month,CaseCreated) %>%
+  summarize(Totals = as.numeric(n())) %>%
+  ungroup() %>%
+  mutate(Case.Made = if_else(lag(MSR.Used.Month)==MSR.Used.Month & CaseCreated==1,Totals,999)) %>%
+  mutate(Case.Made = if_else(lead(MSR.Used.Month)==MSR.Used.Month & Case.Made==999,lead(Case.Made),Case.Made)) %>%
+  mutate(Case.Made = if_else(Case.Made==999,0,Case.Made)) %>%
+  mutate(Case.Not.Made = if_else(lead(MSR.Used.Month)!=MSR.Used.Month,Totals,
+                                 if_else(lead(MSR.Used.Month)==MSR.Used.Month & CaseCreated==0,Totals,999))) %>%
+  subset(CaseCreated==0) %>%
+  mutate(CaseCreated=NULL) %>%
+  mutate(Totals=NULL) %>%
+  mutate(Total.Users = Case.Made+Case.Not.Made) %>%
+  mutate(Percent.Case.Created = round(Case.Made/Total.Users,2)) %>%
+  mutate(Percent.NoCase.Created = round(Case.Not.Made/Total.Users,2)) %>%
+  subset(MSR.Used.Month>="2018-01-01")
+
+
+Savings_MSR_CaseOrientation_Summary <- Savings_MSR_df2 %>%
+  mutate(Case.Start.Orientation = if_else(is.na(Create.Date.Month),"No Case Created",
+                                          if_else(MSR.Used.Month>Create.Date.Month,"After MSR Used",
+                                          if_else(MSR.Used.Month>Create.Date.Month,"Before MSR Used","No Case Created")))) %>%
+  group_by(MSR.Used.Month,Case.Start.Orientation) %>%
+  summarize(Totals = as.numeric(n())) %>%
+  ungroup() %>%
+  subset(MSR.Used.Month>="2018-01-01")
+
+## --
+## NPS with Post-MSR Calc Users
+Savings_MSR_NPS_df1 <- Savings_MSR_df2 %>%
+  mutate(Case.Start.Orientation = if_else(is.na(Create.Date.Month),"No Case Created",
+                                          if_else(MSR.Used.Month>Create.Date.Month,"After MSR Used",
+                                                  if_else(MSR.Used.Month>Create.Date.Month,"Before MSR Used","No Case Created")))) %>%
+  arrange(ContractID) %>%
+  mutate(Unique = if_else(duplicated(ContractID,fromLast=FALSE),0,1)) %>%
+  subset(Unique==1)
+
+
+Savings_MSR_NPS_df1 <- left_join(Savings_MSR_NPS_df1,NPS_df1,by=c("ContractName"="Contract.Name"))
+
+Savings_MSR_NPS_df1 <- Savings_MSR_NPS_df1 %>%
+  subset(!is.na(Agreement.Number))
+
+## By NPS survey type
+Savings_MSR_NPS_NewCustomer <- Savings_MSR_NPS_df1 %>%
+  subset(!is.na(CSAT.Survey.Response)) %>%
+  group_by(MSR.Used.Month,Case.Start.Orientation) %>%
+  summarize(Total.NewCustomer = n(),
+            Avg.NewCustomer = round(mean(CSAT.Survey.Response),2))
+
+Savings_MSR_NPS_HundredDay <- Savings_MSR_NPS_df1 %>%
+  subset(!is.na(Existing.Customer.Response)) %>%
+  group_by(MSR.Used.Month,Case.Start.Orientation) %>%
+  summarize(Total.HundredDay = n(),
+            Avg.ExistingCustomer = round(mean(Existing.Customer.Response),2))
+
+Savings_MSR_NPS_OneYearPlus <- Savings_MSR_NPS_df1 %>%
+  subset(!is.na(OneYearPlus.Customer.Response)) %>%
+  group_by(MSR.Used.Month,Case.Start.Orientation) %>%
+  summarize(Total.OneYearPlus = n(),
+            Avg.OneYearPlus = round(mean(OneYearPlus.Customer.Response),2))
+
+Savings_MSR_Summary <- Savings_MSR_NPS_NewCustomer
+Savings_MSR_Summary <- left_join(Savings_MSR_Summary,Savings_MSR_NPS_HundredDay,by=c("MSR.Used.Month","Case.Start.Orientation"))
+Savings_MSR_Summary <- left_join(Savings_MSR_Summary,Savings_MSR_NPS_OneYearPlus,by=c("MSR.Used.Month","Case.Start.Orientation"))
+  
+##--
+## Savings cases versus MSR calc user cases
+Savings_Cases_ByMonth_df1 <- Savings_Cases_df1 %>%
+  group_by(Create.Date.Month) %>%
+  summarize(Total.Savings.Cases = n())
+
+Savings_Cases_ByMonth_MSR_df1 <- Savings_MSR_df2 %>%
+  group_by(Create.Date.Month) %>%
+  summarize(Total.MSR.Savings.Cases = n())
+
+Savings_Cases_With_MSR_Summary <- left_join(Savings_Cases_ByMonth_df1,Savings_Cases_ByMonth_MSR_df1,
+                                            by="Create.Date.Month")
+
+Savings_Cases_With_MSR_Summary <- Savings_Cases_With_MSR_Summary %>%
+  subset(Create.Date.Month>="2018-01-01") %>%
+  mutate(Percentage.MSR.Of.Total = round(Total.MSR.Savings.Cases/Total.Savings.Cases,2))
+
+
+
+## Service Transfer Point-In-Time Open Cases ----------------------------------
+
+ST_Cases_df1 <- Cases_df1 %>%
+  filter(CaseOwnerName %in% Assignments_ST$Rep.Name)
+
+Assignments_ST_RoleDates <- Assignments_ST %>%
+  select("Rep.Name")
+
+ST_Cases_df1 <- left_join(ST_Cases_df1,Assignments_ST_RoleDates,by=c("CaseOwnerName"="Rep.Name"))
+
+ST_Cases_df2 <- ST_Cases_df1 %>%
+  mutate(Case.Created.Month = as.Date(as.yearmon(CreatedDate))) %>%
+  arrange(Case.Created.Month) %>%
+  group_by(CaseNumber,CreatedDate,ClosedDate) %>%
+  summarize(Totals = n()) %>%
+  mutate(Totals=NULL) %>%
+  ungroup() %>%
+  mutate(CreatedMonth = as.Date(as.yearmon(CreatedDate))) %>%
+  mutate(ClosedMonth = as.Date(as.yearmon(ClosedDate))) %>%
+  mutate(Months.Open = if_else(is.na(ClosedDate),round(as.numeric(Sys.Date()-CreatedMonth)/30,0),
+                               round(as.numeric(ClosedMonth-CreatedMonth)/30,0))) 
+
+## ST Objects
+## https://sunrun.my.salesforce.com/00O0d000005DLn9
+
+rawSTObjects <- read.csv("C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/CM_Scorecard/raw/ST_Object_SFDC.csv",
+                         header=TRUE,
+                         stringsAsFactors = FALSE,
+                         na.strings = c("","NA"))
+
+STObjects_df1 <- head(rawSTObjects,-5)
+
+names(STObjects_df1)[names(STObjects_df1)=="Service.Transfer..Service.Transfer"] <- "Service.Transfer.ID"
+names(STObjects_df1)[names(STObjects_df1)=="Service.Transfer..Owner.Name"] <- "ST.Object.Owner.Name"
+names(STObjects_df1)[names(STObjects_df1)=="Service.Transfer..Created.Date"] <- "ST.Object.Created.Date"
+names(STObjects_df1)[names(STObjects_df1)=="Service.Transfer..Last.Modified.Date"] <- "Service.Transfer.Last.Modified.Date"
+names(STObjects_df1)[names(STObjects_df1)=="NPV...Impact"] <- "NPV.Impact.Amount"
+names(STObjects_df1)[names(STObjects_df1)=="Changed.Contract."] <- "Changed.Contract"
+
+
+STObjects_df1 <- STObjects_df1 %>%
+  arrange(desc(Service.Transfer.ID)) %>%
+  mutate(ST.Object.Created.Date = mdy(ST.Object.Created.Date)) %>%
+  mutate(SR.Signoff = mdy(SR.Signoff)) %>%
+  mutate(Service.Transfer.Last.Modified.Date = mdy(Service.Transfer.Last.Modified.Date)) %>%
+  mutate(SR.Signoff = if_else(is.na(SR.Signoff),as.Date("2999-12-31"),SR.Signoff)) %>%
+  mutate(Status.Grouping = if_else(Status=="Canceled" | Status=="Create Customer Contact in Oracle" | 
+                                     Status=="Verify Customer Contact in Oracle" | Status=="Closed","Closed","Open")) %>%
+  mutate(Closed.Date = if_else(Status.Grouping=="Closed" & SR.Signoff<"2500-12-31",SR.Signoff,
+                               if_else(Status.Grouping=="Closed" & SR.Signoff>"2500-12-31",Service.Transfer.Last.Modified.Date,
+                                       as.Date("2999-12-31"))))
+
+
+STObjects_Summary <- STObjects_df1 %>%
+  subset(ST.Object.Created.Date>="2017-01-01") %>%
+  group_by(ST.Object.Created.Date,Closed.Date,Service.Transfer.ID) %>%
+  summarize(ST.Object.Owner.Count = n()) %>%
+  ungroup() %>%
+  mutate(ST.Object.Owner.Count=NULL) %>%
+  mutate(ST.Created.Month = as.Date(as.yearmon(ST.Object.Created.Date))) %>%
+  mutate(ST.Object.Created.Date=NULL) %>%
+  mutate(ST.Closed.Month = as.Date(as.yearmon(Closed.Date))) %>%
+  mutate(Closed.Date=NULL) %>% 
+  mutate(Service.Transfer..Last.Modified.Date=NULL) %>%
+  select(c("ST.Created.Month","ST.Closed.Month","Service.Transfer.ID")) %>%
+  arrange(Service.Transfer.ID)
+
+
+
+
+## Service Transfer Welcome Calls ----------------------------------
+
+## 1. Case to first activity for Welcome Calls
+## 2. Buyer Welcome Call after case completion SLA
+
+
+
+
+
+
+
+
+
+
+
+
+## Care Calls By Sales Division ----------------------------------
+
+Oppty_df2 <- Oppty_df1 %>%
+  select(c("OppyID","WelcomeCallDate","WelcomeCallStatus","SalesRepDivision"))
+
+Activities_BySales <- left_join(Activities_df1,Oppty_df2,
+                                by=c("OpportunityID"="OppyID"))
+
+Activities_BySales <- Activities_BySales %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  group_by(Call.Month,SalesRepDivision) %>%
+  summarize(Totals = n()) %>%
+  ungroup() %>%
+  subset(Call.Month>="2018-08-01")
+
+
+
+
+## Field Service Calls ----------------------------------
+
+FieldService_Repeats <- Repeat_30_Minus_VCB %>%
+  subset(Case.Record.Type=="Field Service") %>%
+  group_by(Call.Month) %>%
+  summarize(Total.FS.Repeats = n())
+  
+FieldService_TotalCalls <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(Case.Record.Type=="Field Service") %>%
+  group_by(Call.Month) %>%
+  summarize(Total.FS.Calls = n())
+
+FieldService_CallSummary <- left_join(FieldService_TotalCalls,FieldService_Repeats,
+                                      by="Call.Month")
+
+FieldService_CallSummary <- FieldService_CallSummary %>%
+  mutate(FS.RC.Percent = round(Total.FS.Repeats/Total.FS.Calls,2))
+
+FieldService_CallSummary <- left_join(FieldService_CallSummary,Master_Call_Info,by="Call.Month")
+
+FieldService_CallSummary <- FieldService_CallSummary %>%
+  subset(Call.Month>"2018-07-01")
+
+FieldService_CaseReasons <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(Call.Month>"2018-07-01") %>%
+  subset(Case.Record.Type=="Field Service") %>%
+  group_by(Call.Month,SubsetReason) %>%
+  summarize(Subset.Reason.Totals = n()) %>%
+  ungroup() %>%
+  arrange(Call.Month)
+
+FieldService_CaseReasons_raw <- Activities_df1 %>%
+  mutate(Call.Month = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(Call.Month>"2018-07-01") %>%
+  subset(Case.Record.Type=="Field Service")
+
+
+## Emails Customer Care ----------------------------------
+
+## BestBill filters
+BestBillOpenEmails_df1 <- Cases_df1 %>%
+  mutate(EmailOwnedByQueue = if_else(OwnerId=="00G60000001TttfEAC","Customer Care Cases",
+                                     if_else(OwnerId=="00532000004OZLcAAO","mysunrun Apiuser","OTHER"))) %>%
+  subset(EmailOwnedByQueue=="Customer Care Cases") %>%
+  subset(CaseSubject=="Notice - email notification could not be linked") %>%
+  subset(is.na(ClosedDate)) %>%
+  select(c("CaseID","CaseNumber"))
+
+EmailsOpen_Last60Days <- Cases_df1 %>%
+  mutate(EmailOwnedByQueue = if_else(OwnerId=="00G60000001TttfEAC","Customer Care Cases",
+                                     if_else(OwnerId=="00532000004OZLcAAO","mysunrun Apiuser","OTHER"))) %>%
+  subset(EmailOwnedByQueue=="Customer Care Cases" | EmailOwnedByQueue=="mysunrun Apiuser") %>%
+  subset(CaseSubject!="Notice - email notification could not be linked") %>%
+  subset(CaseSubject!="Notice - email could not be linked") %>%
+  subset(CaseSubject!=grepl("Monthly Energy Production",CaseSubject)) %>%
+  subset(is.na(ClosedDate)) %>%
+  subset(CreatedDate>=Sixty_Days) %>%
+  arrange(CreatedDate)
+
+## Bad process on SC: 1485021037 // Case #: 03277542
+
+----
+
+## General Care email queue / standard cases
+EmailsGeneral_df1 <- Cases_df1 %>%
+  subset(Case.Created.By=="Sunrun CRM") %>%
+  mutate(EmailMonth = as.Date(as.yearmon(CreatedDate))) %>%
+  subset(EmailMonth>="2018-11-01") %>%
+  subset(Case.Record.Type=="Standard") %>%
+  arrange(desc(ContractID)) %>%
+  mutate(RepeatEmail = if_else(duplicated(ContractID,fromLast = FALSE),1,0)) %>%
+  mutate(Dis)
+
+
+## Closed emails for cycle time
+## omitting "Notice - email could not be linked" emails
+EmailsClosed <- EmailsGeneral_df1 %>%
+  subset(!is.na(ClosedDate)) %>%
+  mutate(Notice = if_else(grepl("email could not be linked",CaseSubject),1,0)) %>%
+  subset(Notice==0) %>%
+  mutate(Notice=NULL)
+
+EmailsClosed <- left_join(EmailsClosed,rawUser_IDsOnly,
+                          by=c("LastModifiedById"="Id"))
+
+EmailsClosed <- EmailsClosed %>%
+  mutate(LastModifiedByName = FullName) %>%
+  mutate(FullName=NULL)
+
+## clearing out DocuSign automated emails
+EmailsClosed <- EmailsClosed %>%
+  mutate(DocuSignEmails = if_else(grepl("Customer Care has sent you a new DocuSign document to view and sign",
+                                        Description),1,0)) %>%
+  subset(DocuSignEmails==0) %>%
+  mutate(DocuSignEmails=NULL)
+
+## cycle times and SLA-adherence calculation
+EmailsClosed <- EmailsClosed %>%
+  mutate(CycleTimeMinutes = round(ClosedDate-CreatedDate,0)) %>%
+  mutate(UnderTwoDays = round((CycleTimeMinutes/60)/8,0)) %>%
+  mutate(WithinSLA = if_else(UnderTwoDays<=2,1,0))
+
+#summary table for avg/median cycle time closures
+EmailsClosedCycleSummary <- EmailsClosed %>%
+  group_by(EmailMonth) %>%
+  summarize(TotalClosed = n(),
+            AvgCycleWorkingDays = round((mean(CycleTimeMinutes)/60)/8,0),
+            MedianCycleWorkingDays = round((median(CycleTimeMinutes)/60)/8,0)) %>%
+  ungroup()
+
+## emails closed within 2 working days summary
+EmailsClosedSLASummary <- EmailsClosed %>%
+  group_by(EmailMonth,WithinSLA) %>%
+  summarize(OutsideSLA = n()) %>%
+  ungroup() %>%
+  mutate(WithinSLA = if_else(lead(EmailMonth)==EmailMonth,lead(OutsideSLA),OutsideSLA)) %>%
+  subset(!is.na(WithinSLA)) %>%
+  mutate(PercentWithinSLA = round(WithinSLA/(WithinSLA+OutsideSLA),2)) %>%
+  mutate(DEL = if_else(WithinSLA==OutsideSLA,1,0)) %>%
+  subset(DEL==0) %>%
+  mutate(DEL=NULL)
+
+
+## SFDC Import of raw emails
+## https://sunrun.my.salesforce.com/00O0d000005Cv4N
+
+rawEmail <- read.csv("C:/Users/eric.reschke/Desktop/R/Emails/raw/Email_SFDC_Rpt.csv",
+                     header = TRUE,
+                     stringsAsFactors = FALSE,
+                     na.strings = c("","NA"))
+
+rawEmail <- head(rawEmail,-5)
+
+Email_df1 <- rawEmail %>%
+  mutate(ServiceContract = as.character(Service.Contract..Contract.Name)) %>%
+  mutate(Service.Contract..Contract.Name = NULL) %>%
+  mutate(Case.Number = paste("0",Case.Number,sep="")) %>%
+  mutate(Case.Number = as.character(Case.Number)) %>%
+  mutate(Email.Created.Date = mdy(Created.Date)) %>%
+  mutate(Created.Date=NULL) %>%
+  mutate(CreatedBy = Created.By..Full.Name) %>%
+  mutate(Created.By..Full.Name = NULL) %>%
+  mutate(CaseCreatedDate = Date.Time.Opened) %>%
+  mutate(Date.Time.Opened=NULL) %>%
+  mutate(CaseOwner = Case.Owner..Full.Name) %>%
+  mutate(Case.Owner..Full.Name=NULL) %>%
+  mutate(SubsetReason = Subset.Reasons) %>%
+  mutate(Subset.Reasons=NULL) %>%
+  mutate(EmailSubject = Subject) %>%
+  mutate(Subject = NULL) %>%
+  mutate(OutboundEmailCount = if_else(grepl("@sunrun.com",From.Address),1,0)) %>%
+  mutate(InboundEmailCount = if_else(OutboundEmailCount==0,1,0)) %>%
+  subset(!is.na(ServiceContract)) %>%
+  subset(CreatedBy=="Sunrun CRM") %>%
+  subset(!grepl("New case email notification",EmailSubject)) %>%
+  ##cut out internal email forwarding
+  mutate(InternalEmails = if_else(grepl("@sunrun.com",To.Address) & 
+                                    grepl("@sunrun.com",From.Address),1,0)) %>%
+  subset(InternalEmails==0) %>%
+  mutate(InternalEmails=NULL) %>%
+  subset(!grepl("noreply",From.Address)) %>%
+  arrange(ServiceContract,Email.Created.Date) %>%
+  mutate(CareInvolved = if_else(grepl("customercare",To.Address) | 
+           grepl("customercare",From.Address),1,0)) %>%
+  subset(CareInvolved==1) %>%
+  mutate(CareInvolved=NULL) %>%
+  mutate(Dup = if_else(duplicated(ServiceContract,fromLast = FALSE),1,0)) %>%
+  mutate(InitialEmail = if_else(Dup==0 & lead(Case.Number)==Case.Number,1,
+                                if_else(Dup==0 & lead(Case.Number)!=Case.Number,1,0))) %>%
+  mutate(InitialEmail = if_else(InitialEmail==1,"Initial Email","Follow-up Email"))
+
+
+Emails_Summary <- Email_df1 %>%
+  group_by(ServiceContract,InboundEmailCount,OutboundEmailCount) %>%
+  summarize(Totals = n())
+
+
+
+
+
+
+
+## Pre-PTO Calls ----------------------------------
+
+PrePTO_Calls <- Activities_df1 %>%
+  mutate(PrePTO.Call = if_else(ActivityCreatedOnDate<PTODate,1,0)) %>%
+  subset(PrePTO.Call==1)
+
+PrePTO_Calls_Unique <- PrePTO_Calls %>%
+  subset(Dup.Contract==0)
+
+PrePTO_Calls_Summary <- PrePTO_Calls %>%
+  mutate(CallMonth = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  group_by(CallMonth) %>%
+  summarize(CallsPerMonth = n())
+
+PrePTO_Calls_UniqueSummary <- PrePTO_Calls_Unique %>%
+  mutate(CallMonth = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  group_by(CallMonth) %>%
+  summarize(UniqueCallsPerMonth = n())
+
+PrePTO_Calls_Summary <- left_join(PrePTO_Calls_Summary,PrePTO_Calls_UniqueSummary,
+                                  by="CallMonth")
+
+PrePTO_Calls_Summary <- PrePTO_Calls_Summary %>%
+  ungroup() %>%
+  subset(CallMonth>"2016-12-01") %>%
+  mutate(RepeatCallRate = round(1-(UniqueCallsPerMonth/CallsPerMonth),2))
+
+##Unique Pre-PTO Subset Reasons
+PrePTO_Calls_UniqueReasons <- PrePTO_Calls_Unique %>%
+  mutate(CallMonth = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  subset(CallMonth>"2016-12-01") %>%
+  group_by(CallMonth,SubsetReason) %>%
+  summarize(Totals = n()) %>%
+  ungroup() %>%
+  group_by(CallMonth) %>%
+  arrange(CallMonth,desc(Totals)) %>%
+  mutate(SubsetReason = if_else(is.na(SubsetReason),"Not Documented",SubsetReason))
+
+
+
+
+
+
+
+
+
+## Billing Calls ----------------------------------
+
+## Billing calls out of handled; highest subsets
+
+Billing_Calls <- Activities_df1 %>%
+  mutate(CallMonth = as.Date(as.yearmon(ActivityCreatedOnDate))) %>%
+  mutate(BillGroup = if_else(grepl("Bill",CaseReason),1,0)) %>%
+  mutate(BillGroup = if_else(grepl("Bill",ActivityReason),1,BillGroup)) %>%
+  subset(BillGroup == 1) %>%
+  mutate(BillReason = if_else(is.na(ActivityReason),CaseReason,
+         if_else(is.na(CaseReason),ActivityReason,CaseReason))) %>%
+  mutate(BillSubset = if_else(is.na(ActivitySubset),SubsetReason,
+                              if_else(is.na(SubsetReason),ActivitySubset,SubsetReason))) %>%
+  subset(ActivityCreatedOnDate>="2017-01-01")
+
+##
+
+Billing_CallReasons_Summary <- Billing_Calls %>%
+  group_by(CallMonth,BillSubset) %>%
+  summarize(Totals = n()) %>%
+  ungroup() %>%
+  mutate(BillSubset = if_else(is.na(BillSubset),"Not Documented",BillSubset)) %>%
+  group_by(CallMonth) %>%
+  arrange(CallMonth, desc(Totals))
+
+##
+
+Billing_CallTotal_Summary <- Billing_Calls %>%
+  group_by(CallMonth) %>%
+  summarize(Handled.Billing.Calls = n()) %>%
+  ungroup()
+
+Billing_CallTotal_Summary <- left_join(Billing_CallTotal_Summary,Monthly_Handled_df1,
+                                       by=c("CallMonth"="Text.Month"))
+
+Billing_CallTotal_Summary <- Billing_CallTotal_Summary %>%
+  subset(!is.na(Handled.Calls)) %>%
+  mutate(BillingCallRate = round(Handled.Billing.Calls/Handled.Calls,2))
+
+
+
+
+## Coscto Scorecard ----------------------------------
+
+## Cases worked for fully paid customers
+## SFDC report but misses some data:
+## https://sunrun.my.salesforce.com/00O0d000005DUJ8
+
+Cases_Costco_df1 <- Cases_df1 
+
+rawLastMod_By <- rawUser_IDsOnly %>%
+  mutate(OwnerName = FullName) %>%
+  mutate(FullName = NULL)
+
+Cases_Costco_df1 <- left_join(Cases_Costco_df1,rawLastMod_By,
+                              by=c("OwnerId"="Id"))
+
+Cases_Costco_df1 <- left_join(Assignments_Costco,Cases_Costco_df1,
+                                by=c("Rep.Name"="OwnerName"))
+
+Cases_Costco_df1 <- left_join(Cases_Costco_df1,SC_df1,
+                              by="ContractID")
+
+Cases_Costco_df1 <- Cases_Costco_df1 %>%
+  mutate(BillingMethod = if_else(is.na(BillingMethod),"Unknown",BillingMethod)) %>%
+  mutate(CustomerOwned = if_else(grepl("Full Upfront",BillingMethod),1,0)) %>%
+  mutate(CustomerOwned = if_else(grepl("Customer Owned",BillingMethod),1,CustomerOwned)) %>%
+  mutate(CaseClosedMonth = as.Date(as.yearmon(ClosedDate)))
+  
+Cases_Costco_Summary <- Cases_Costco_df1 %>%
+  group_by(CaseClosedMonth,CustomerOwned,Rep.Name) %>%
+  summarize(TotalCasesWorked = as.numeric(n())) %>%
+  ungroup() %>%
+  arrange(CaseClosedMonth,desc(Rep.Name)) %>%
+  subset(!is.na(CaseClosedMonth)) %>%
+  filter(CaseClosedMonth>="2018-01-01" & CaseClosedMonth<"2019-01-01") %>%
+  mutate(CustomerNotOwned = if_else(CustomerOwned==0,TotalCasesWorked,999)) %>%
+  mutate(TotalCasesWorked = if_else(lead(CaseClosedMonth)==CaseClosedMonth,lead(TotalCasesWorked),999)) %>%
+  subset(CustomerOwned==0) %>%
+  mutate(CustomerOwned=NULL) %>%
+  mutate(CustomerOwned=TotalCasesWorked) %>%
+  mutate(TotalCasesWorked=NULL)
+
+
+
+
+## FS Disptaches ----------------------------------
+
+## SFDC report: https://sunrun.my.salesforce.com/00O0d000005Cq9r
+
+rawFSDispatch <- read.csv("C:/Users/eric.reschke/Desktop/R/FieldService/raw/Dispatch_General_Counts.csv",
+         header=TRUE,
+         stringsAsFactors = FALSE,
+         na.strings = c("","NA"))
+
+FSDispatch_df1 <- rawFSDispatch %>%
+  mutate(FS.Case.Number = paste("0",FS.Case,sep=""))
+
+FSDispatch_df1 <- left_join(Activities_df1,FSDispatch_df1,by=c("CaseNumber"="FS.Case.Number"))
+
+FSDispatch_df1 <- FSDispatch_df1 %>%
+  subset(!is.na(FS.Case)) %>%
+  mutate(CallMonth = as.Date(as.yearmon(ActivityCreatedOnDate)))
+
+## Summary of FS, Billing and 100 Day callers ----------------------------------
+
+FSDispatch_Calls_Summary <- FSDispatch_df1 %>%
+  group_by(CallMonth) %>%
+  summarize(Total.FS.Calls = n()) %>%
+  ungroup() 
+
+FSDispatch_Calls_Summary <- left_join(Billing_CallTotal_Summary,FSDispatch_Calls_Summary,
+                                      by="CallMonth")
+
+FSDispatch_Calls_Summary <- FSDispatch_Calls_Summary %>%
+  subset(CallMonth>="2017-01-01") #%>%
+  #subset(CallMonth<="2018-12-01")
+
+FSDispatch_Calls_Summary <- left_join(FSDispatch_Calls_Summary,Fleet_Growth,
+                                      by=c("CallMonth"="PTO.Month"))
+
+FSDispatch_Calls_Summary <- FSDispatch_Calls_Summary %>%
+  mutate(Fleet.Growth=NULL) %>%
+  mutate(CumulativeFleet = Cumulative) %>%
+  mutate(Cumulative=NULL) %>%
+  mutate(BillingOverFleet = round(Handled.Billing.Calls/CumulativeFleet,4)) %>%
+  mutate(FSCallsOverFleet = round(Total.FS.Calls/CumulativeFleet,4))
+
+FSDispatch_Calls_Summary <- left_join(FSDispatch_Calls_Summary,Fleet_Summary_df2,
+                                      by=c("CallMonth"="Possible.Cohort.Total"))
+
+FS_Billing_100Day_Call_Summary <- FSDispatch_Calls_Summary %>%
+  mutate(Baseline100DayFleet= FleetBaseline) %>%
+  mutate(FleetBaseline=NULL)
+
+## borrowing from Fire Master on 100 day callers...
+HundredDayCallers <- Fire_Master %>%
+  select(c("Call.Month","LessOrEqual.100"))
+
+##
+FS_Billing_100Day_Call_Summary <- left_join(FS_Billing_100Day_Call_Summary,HundredDayCallers,
+                                            by=c("CallMonth"="Call.Month"))
+
+FS_Billing_100Day_Call_Summary <- FS_Billing_100Day_Call_Summary %>%
+  mutate(HundredOverHundredFleet = round(LessOrEqual.100/Baseline100DayFleet,2))
+
+
+
+
+
+
+## Offer & Promotion Cases ----------------------------------
+
+# Offer Promotions,Referral,Referral Promotions,Referrals and Promotions
+OfferPromo_Cases <- Activities_df1 %>%
+  mutate(Ref.Prom.Types = if_else(grepl("Refer",GlobalCaseReason),1,0)) %>%
+  mutate(Ref.Prom.Types = if_else(grepl("Promot",GlobalCaseReason),1,Ref.Prom.Types)) %>%
+  subset(Ref.Prom.Types==1) %>%
+  mutate(Ref.Prom.Types=NULL)
+
+OfferPromo_Cases <- left_join(OfferPromo_Cases,NPS_df1,by=c("ContractName"="Contract.Name"))
+
+
+
+
+## Bar Chart - RC Subset Reasons ----------------
+
+RC_Subsets_Graph <- ggplot(RC_Subsets, aes(x=reorder(GlobalSubsetReason,-RC.Totals), 
+                                           y=RC.Totals)) +
+  theme_bw() +
+  theme(legend.position = "top",plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.text.x=element_text(angle=90,vjust=.55,size=11)) +
+  geom_bar(stat="identity",color="black",fill="#00ADE6",position="stack") + 
+  geom_text(aes(label=RC.Totals),color="black",position=position_stack(.5)) +
+  labs(x="",y="",title="Repeat Call Top Subsets",subtitle="Current Month",
+       caption="") 
+
+RC_Subsets_Graph
+
+
+## Bar Chart - RC Case Reasons -------
+
+RC_CaseReasons_Graph <- ggplot(RC_CaseReasons, aes(x=reorder(GlobalCaseReason,-RC.CaseReason.Totals), 
+                                                   y=RC.CaseReason.Totals)) +
+  theme_bw() +
+  theme(legend.position = "top",plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.text.x=element_text(angle=90,vjust=.55,size=11)) +
+  geom_bar(stat="identity",color="black",fill="#00ADE6",position="stack") + 
+  geom_text(aes(label=RC.CaseReason.Totals),color="black",position=position_stack(.5)) +
+  labs(x="",y="",title="Repeat Call Top Case Reasons",subtitle="Current Month",
+       caption="") 
+
+RC_CaseReasons_Graph
+
+
+## Bar Chart - Rep Scorecard && RC Subset Reasons ----------------
+
+RC_Scorecard_Graph <- ggplot(Repeat_DailyScorecard, aes(x=FullName, 
+                                                        y=Repeat.Calls.By.Rep.Total)) +
+  theme_bw() +
+  theme(legend.position = "top",plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.text.x=element_text(angle=90,vjust=.55,size=11)) +
+  geom_bar(stat="identity",fill="#00ADE6",position="stack") + 
+  labs(x="",y="",title="Repeat Calls By Representative",subtitle="Current Month Repeat Call Stacks",
+       caption="") 
+
+RC_Scorecard_Graph
+
+## Graph #2 -- #
+
+RepRC_Plotly_Graph <- plot_ly(Repeat_DailyScorecard, x = ~FullName, y = ~Repeat.Calls.By.Rep.Total, 
+                              type = "bar",
+                              text = Repeat_DailyScorecard$Repeat.Calls.By.Rep.Total, textposition = "outside",
+                              name = "Stack Rank of Month to Date Repeat Calls", 
+                              marker = list(color = "rgb(0 173 230)",
+                                            width = 1.5)) %>%
+  layout(xaxis = list(title = "", 
+                      tickangle = 90,
+                      tick0 = 0,
+                      dtick = 1),
+         yaxis = list(title = "Repeat Call Count"),
+         margin = list(b = 100),
+         barmode = 'group')
+
+RepRC_Plotly_Graph
+
+## Bubble Chart - Documentation && Repeats ----------------
+
+Repeat_DocRate_df1 <- Master_Call_Info %>%
+  select(c("Call.Month","RC.Rate","Documentation.Rate")) 
+
+RepeatDocRate_BubbleChart <- plot_ly(Repeat_DocRate_df1, 
+                                 x = ~RC.Rate, y = ~Documentation.Rate, 
+                                 text = ~RC.Rate, type = 'scatter', mode = 'markers', size = ~RC.Rate, 
+                                 color = ~Documentation.Rate, colors = 'Paired',
+                                 marker = list(opacity = 0.5, sizemode = 'diameter')) %>%
+  layout(title = 'Repeat and Documentation Rate Correlation',
+         xaxis = list(showgrid = TRUE),
+         yaxis = list(showgrid = TRUE),
+         showlegend = TRUE)
+
+RepeatDocRate_BubbleChart
+
+
+
+## Removing certain DF's to save memory ----------------------------------
+
+rm(Oppty_df1)
+rm(Oppty_df2)
+rm(rawLatitude)
+rm(rawInContact)
+rm(InContact_df1)
+
+
+## CSV Outputs ----------------------------------
+
+write.csv(Master_Call_Info,"C:/Users/eric.reschke/Desktop/R/Repeats/Master_Call_Info.csv",row.names = FALSE)
+write.csv(RC_Per_IVR_Cust,"C:/Users/eric.reschke/Desktop/R/Repeats/RC_Per_IVR_Cust.csv",row.names = FALSE)
+write.csv(RC_Per_IVR_Skill,"C:/Users/eric.reschke/Desktop/R/Repeats/RC_Per_IVR_Skill.csv",row.names = FALSE)
+write.csv(Documentation_By_Rep,"C:/Users/eric.reschke/Desktop/R/Documentation_Tier1/Documentation_GrandTotal.csv",row.names = FALSE)
+#write.csv(Monthly_Documentation_Count,"C:/Users/eric.reschke/Desktop/R/Documentation_Tier1/Monthly_Documentation_Count.csv",row.names = FALSE)
+write.csv(Fleet_Growth,"C:/Users/eric.reschke/Desktop/R/Repeats/Fleet_Growth.csv",row.names = FALSE)
+#write.csv(Activities_PostEnhancement,"C:/Users/eric.reschke/Desktop/R/Repeats/Activities_PostEnhancement.csv",row.names = FALSE)
+write.csv(CaseReasonsMonthly,"C:/Users/eric.reschke/Desktop/R/CaseReasons/CaseReasonsMonthly.csv",row.names = FALSE)
+write.csv(SubsetReasonsMonthly,"C:/Users/eric.reschke/Desktop/R/CaseReasons/SubsetReasonsMonthly.csv",row.names = FALSE)
+write.csv(CaseReasonsCombined,"C:/Users/eric.reschke/Desktop/R/CaseReasons/CaseReasonsCombined.csv",row.names = FALSE)
+write.csv(Unique_Caller_CaseReasons,"C:/Users/eric.reschke/Desktop/R/CaseReasons/Unique_Caller_CaseReasons.csv",row.names = FALSE)
+write.csv(Unique_Caller_SubsetReason,"C:/Users/eric.reschke/Desktop/R/CaseReasons/Unique_Caller_SubsetReason.csv",row.names = FALSE)
+write.csv(CaseReasonsWithNotes,"C:/Users/eric.reschke/Desktop/R/CaseReasons/CaseReasonsWithNotes.csv",row.names = FALSE)
+write.csv(OfferPromo_Cases,"C:/Users/eric.reschke/Desktop/R/CaseReasons/OfferPromo_Cases.csv",row.names = FALSE)
+##
+write.csv(Training_Doc_Rpt,"C:/Users/eric.reschke/Desktop/R/Documentation_Tier1/Training_Doc_Rpt.csv",row.names = FALSE)
+write.csv(Daily_10_Day_RCs,"C:/Users/eric.reschke/Desktop/R/Repeats/Daily_10_Day_RCs.csv")
+write.csv(Tier1OwnedOpenCases,"C:/Users/eric.reschke/Desktop/R/Documentation_Tier1/Tier1OwnedOpenCases.csv",row.names = FALSE)
+write.csv(Rep_Documentation_Count,"C:/Users/eric.reschke/Desktop/R/Documentation_Tier1/Rep_Documentation_Count.csv",row.names = FALSE)
+##
+write.csv(Repeat_CaseManager_Owners_df2,"C:/Users/eric.reschke/Desktop/R/Repeats/Repeat_CaseManager_Owners.csv")
+write.csv(Repeat_CaseManager_Owners_Scorecard,"C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/CM_Scorecard/raw/Repeat_CaseManager_Owners_Scorecard.csv")
+write.csv(Repeat_ServiceTransfer_Owners_Scorecard,"C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/CM_Scorecard/raw/Repeat_ServiceTransfer_Owners_Scorecard.csv")
+write.csv(Key_Export,"C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/Tier1_Scorecard/InView/Key_Export.csv",row.names = FALSE)
+write.csv(Repeat_DailyScorecard,"C:/Users/eric.reschke/Desktop/R/Repeats/Repeat_DailyScorecard.csv",row.names = FALSE)
+#write.csv(Repeat_DailyScorecard,"C:/Users/eric.reschke/Desktop/Rep_CM_Scorecards/CM_Scorecard/raw/Scorecard_Export_RepeatCalls_30Day.csv")
+write.csv(RepData_CMScorecardExport,"C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/CM_Scorecard/raw/CMScorecard_RepData.csv",row.names=FALSE)
+##
+write.csv(Fire_Master,"C:/Users/eric.reschke/Desktop/R/PTOPlus_X/Fire_Master.csv",row.names = FALSE)
+write.csv(Fire_Master_Unique,"C:/Users/eric.reschke/Desktop/R/PTOPlus_X/Fire_Master_Unique.csv",row.names = FALSE)
+write.csv(Fire_Callers_ByCohort,"C:/Users/eric.reschke/Desktop/R/PTOPlus_X/Fire_Callers_ByCohort.csv",row.names = FALSE)
+write.csv(Fire_UniqueCallers_ByCohort,"C:/Users/eric.reschke/Desktop/R/PTOPlus_X/Fire_UniqueCallers_ByCohort.csv",row.names = FALSE)
+##
+#write.csv(temp_100Day_df2,"C:/Users/eric.reschke/Desktop/R/Repeats/temp_100Day_df2.csv",row.names = FALSE)
+write.csv(Rando,"C:/Users/eric.reschke/Desktop/R/Repeats/Rando.csv",row.names = FALSE)
+##
+write.csv(BrightboxUniqueWithNPS_df2,"C:/Users/eric.reschke/Desktop/R/BrightBox/BrightboxUniqueWithNPS_df2.csv",row.names = FALSE)
+write.csv(BrightBox_NPS_Baseline,"C:/Users/eric.reschke/Desktop/R/BrightBox/BrightBox_NPS_Baseline.csv",row.names = FALSE)
+write.csv(BrightBox_CustInquiry,"C:/Users/eric.reschke/Desktop/R/BrightBox/BrightBox_CustInquiry.csv",row.names = FALSE)
+##
+write.csv(SavingsCall_Summary,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_QoQ.csv",row.names = FALSE)
+write.csv(Savings_Monthly,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_MoM.csv",row.names = FALSE)
+write.csv(Savings_Monthly_Unique,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_Monthly_Unique.csv",row.names = FALSE)
+write.csv(Savings_PTOCohort,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_PTOCohort.csv",row.names = FALSE)
+write.csv(Savings_NPS_100Day_Monthly,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_NPS_100Day_Monthly.csv",row.names = FALSE)
+write.csv(Savings_NPS_100Day_TraditionalScore,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_NPS_100Day_TraditionalScore.csv",row.names = FALSE)
+write.csv(Savings_NPS_NewCustomer_Monthly,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_NPS_NewCustomer_Monthly.csv",row.names = FALSE)
+write.csv(Savings_SystemSize,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_SystemSize.csv",row.names = FALSE)
+write.csv(Savings_PTODistance_Summary,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_PTODistance_Summary.csv",row.names = FALSE)
+write.csv(Savings_MetroMarket,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_MetroMarket.csv",row.names = FALSE)
+write.csv(Savings_California_ByUtility,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_California_ByUtility.csv",row.names = FALSE)
+write.csv(Savings_California_ByCounty,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_California_ByCounty.csv",row.names = FALSE)
+write.csv(Savings_California_BySystemSize,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_California_BySystemSize.csv",row.names = FALSE)
+write.csv(Savings_MSR_Summary,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_MSR_Summary.csv",row.names = FALSE)
+write.csv(Savings_MSR_CaseOrientation_Summary,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_MSR_CaseOrientation_Summary.csv",row.names = FALSE)
+write.csv(Savings_MSR_Summary,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_MSR_Summary.csv",row.names = FALSE)
+write.csv(Savings_Cases_With_MSR_Summary,"C:/Users/eric.reschke/Desktop/R/Savings/Savings_Cases_With_MSR_Summary.csv",row.names = FALSE)
+##
+write.csv(NPS_Callers100Day_Summary,"C:/Users/eric.reschke/Desktop/R/CSAT/NPS_Callers100Day_Summary.csv",row.names = FALSE)
+write.csv(NPS_SRM_Only_Callers100Day_Summary,"C:/Users/eric.reschke/Desktop/R/CSAT/NPS_SRM_Only_Callers100Day_Summary.csv",row.names = FALSE)
+write.csv(NPS_Monthly,"C:/Users/eric.reschke/Desktop/R/CSAT/NPS_Monthly.csv",row.names = FALSE)
+write.csv(NPSAnswers_df1,"C:/Users/eric.reschke/Desktop/R/CSAT/NPSAnswers_df1.csv",row.names = FALSE)
+##
+write.csv(Activities_BySales,"C:/Users/eric.reschke/Desktop/R/Sales/Activities_BySales.csv",row.names = FALSE)
+##
+write.csv(FieldService_CallSummary,"C:/Users/eric.reschke/Desktop/R/FieldService/FieldService_CallSummary.csv",row.names = FALSE)
+write.csv(FieldService_CaseReasons,"C:/Users/eric.reschke/Desktop/R/FieldService/FieldService_CaseReasons.csv",row.names = FALSE)
+write.csv(FieldService_CaseReasons_raw,"C:/Users/eric.reschke/Desktop/R/FieldService/FieldService_CaseReasons_raw.csv",row.names = FALSE)
+##
+write.csv(ST_Cases_df2,"C:/Users/eric.reschke/Desktop/R/ServiceTransfer/ST 2019 Forecast/ST_Cases_df2.csv",row.names = FALSE)
+write.csv(STObjects_Summary,"C:/Users/eric.reschke/Desktop/R/ServiceTransfer/ST 2019 Forecast/STObjects_Summary.csv",row.names = FALSE)
+##
+write.csv(CareReps,"C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/raw/CareReps.csv",row.names = FALSE)
+##
+write.csv(Billing_CallTotal_Summary,"C:/Users/eric.reschke/Desktop/R/Billing/Billing_CallTotal_Summary.csv",row.names = FALSE)
+write.csv(Billing_CallReasons_Summary,"C:/Users/eric.reschke/Desktop/R/Billing/Billing_CallReasons_Summary.csv",row.names = FALSE)
+##
+write.csv(PrePTO_Calls_Summary,"C:/Users/eric.reschke/Desktop/R/PrePTO_Calls/PrePTO_Calls_Summary.csv",row.names = FALSE)
+write.csv(PrePTO_Calls,"C:/Users/eric.reschke/Desktop/R/PrePTO_Calls/PrePTO_Calls.csv",row.names = FALSE)
+##
+write.csv(Cases_Costco_Summary,"C:/Users/eric.reschke/Desktop/R/Costco/Cases_Costco_Summary.csv",row.names = FALSE)
+##
+write.csv(Email_df1,"C:/Users/eric.reschke/Desktop/R/Emails/Care_Emails.csv",row.names = FALSE)
+##
+
+
+## Google Drive Upload ----------------------------------
+
+### https://github.com/tidyverse/googledrive/blob/master/R/drive_get.R
+## drive_ls("~/Care_Studio") // lists the actual id's of files in Google Drive
+
+# Master_Call_Info 
+#drive_update(file = "~/Care_Studio/Care_Master_Summary", 
+#             media = "C:/Users/eric.reschke/Desktop/R/Repeats/Master_Call_Info.csv",verbose = TRUE)
+
+
+# Repeat_DailyScorecard [19Ff0WKnOE6pb38jtz3ZYHqdpbkGPemGs8DxdickajM8]
+#drive_update(file = "~/Care_Studio/Repeat_DailyScorecard", 
+#             media = "C:/Users/eric.reschke/Desktop/R/Repeats/Repeat_DailyScorecard.csv",verbose = TRUE)
+
+
+# Key_Export (first-time upload)
+#drive_upload(path = "~/KEY/", 
+#             media = "C:/Users/eric.reschke/Desktop/Rep_CM_Scorecards/Tier1_Scorecard/Key_Export.csv",verbose = TRUE)
+
+
+# Key_Export (ongoing upload)
+drive_update(file = "~/KEY/Key_Export", 
+             media = "C:/Users/eric.reschke/Desktop/R/Rep_CM_Scorecards/Tier1_Scorecard/InView/Key_Export.csv",verbose = TRUE)
+
+
+
+## ----------------------------------
+
+#save.image("C:/Users/eric.reschke/Desktop/R/Main/R/CurrentImport.RData")
+
+
+
