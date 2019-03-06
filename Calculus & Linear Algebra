@@ -1,0 +1,885 @@
+## Data Science Math Script
+
+## Setup  ----------------
+
+library(rgl,warn.conflicts = FALSE)
+library(dplyr,warn.conflicts = FALSE)
+library(ggplot2,warn.conflicts = FALSE)
+library(forcats,warn.conflicts = FALSE)
+library(tidyr,warn.conflicts = FALSE)
+library(plotly,warn.conflicts = FALSE)
+library(zoo,warn.conflicts = FALSE)
+library(lubridate,warn.conflicts = FALSE)
+require(stringr)
+library(bigrquery,warn.conflicts = FALSE)
+library(shiny,warn.conflicts = FALSE)
+library(shinydashboard,warn.conflicts = FALSE)
+library(googledrive,warn.conflicts = FALSE)
+library(googleVis,warn.conflicts = FALSE)
+library(plot3D,warn.conflicts = FALSE)
+library(numDeriv,warn.conflicts = FALSE)
+
+setwd("C:/Users/eric.reschke/Desktop/School/DS_Math/R")
+
+CurrentMonth <- as.Date(as.yearmon(Sys.Date()))
+
+
+
+## Week 1
+## Quadratic Equation  ----------------
+
+a <- 1
+b <- -4
+c <- -5
+
+x_Addsqrt <- -b+sqrt((b^2) - (4*a*c))
+x_Addsqrt <- x_Addsqrt/(2*a)
+
+x_Subtractsqrt <- -b-sqrt((b^2) - (4*a*c))
+x_Subtractsqrt <- x_Subtractsqrt/(2*a)
+
+
+## Slopes  ----------------
+
+## x-axis continuous values
+x_MIN <- -2
+x_MAX <- 2
+
+## Establish main table
+x_vals <- matrix(c(x_MIN:x_MAX))
+slopeTableMain <- x_vals
+colnames(slopeTableMain) <- "x"
+slopeTableMain <- as.data.frame(slopeTableMain)
+slopeTableMain <- slopeTableMain %>%
+  mutate(x = as.numeric(x))
+
+
+## Midterm Question #2 f(x) ----------
+
+## fx) == x^2 + 4x + 2
+slopeTableM4 <- slopeTableMain %>%
+  mutate(y = ((x^2)+(4*x) + 2)) %>%
+  mutate(m = if_else(is.na(lead(y)),0,
+                     (lead(y)-y)/(lead(x)-x),0))
+
+fxM4 <-ggplot(data=slopeTableM4, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=y,vjust=1.5))+
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("f(x) = 2x+8 when x<=-2; x^2 when x>-2") +
+  ggtitle("slopeTableM4")
+
+fxM4
+ggplotly(fxM4)
+
+
+
+## Midterm Question #5 ----------
+midterm5Table <- slopeTableMain %>%
+  mutate(y = ((x^2)-(40*x))) %>%
+  mutate(derivative = ((2*x)-40))
+
+fxMQ5 <-ggplot(data=midterm5Table, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=y,vjust=1.5)) +
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("Profit") +
+  xlab("Size of Farm (in acres)") +
+  ggtitle("Midterm Question #5")
+
+ggplotly(fxMQ5)
+fxMQ5
+
+# ## m == slope
+# midterm5Table <- midterm5Table %>%
+#   mutate(m = if_else(is.na(lead(y)),0,
+#                      (lead(y)-y)/(lead(x)-x),0))
+
+
+
+
+
+## f(x) #1 ----------
+slopeTable1 <- slopeTableMain %>%
+  mutate(y = abs(x))
+
+fx1 <- ggplot(data=slopeTable1, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=y,vjust=1.5)) +
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("f(x) = abs(x)") +
+  ggtitle("slopeTable1")
+
+ggplotly(fx1)
+fx1
+
+## f(x) #2 ----------
+slopeTable2 <- slopeTableMain %>%
+  mutate(y = ((x+1)*(x-3))/((x-6)*(x+2)))
+
+fx2 <- ggplot(data=slopeTable2, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("f(x) = (x+1)*(x-3)/(x-6)*(x+2)") +
+  ggtitle("slopeTable2")
+
+ggplotly(fx2)
+fx2
+
+## f(x) #3 ----------
+slopeTable3 <- slopeTableMain %>%
+  mutate(y = ((2*(x^2)))) %>%
+  mutate(m = if_else(is.na(lead(y)),0,
+                     (lead(y)-y)/(lead(x)-x),0))
+
+fx3 <-ggplot(data=slopeTable3, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=y,vjust=1.5))+
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("f(x) = 2x+8 when x<=-2; x^2 when x>-2") +
+  ggtitle("slopeTable3")
+
+fx3
+ggplotly(fx3)
+
+
+## f(x,y) ----------
+
+# https://www.wolframalpha.com/input/?i=plot+%5B%2F%2Fmath:-x%5E2-y%5E2%2F%2F%5D
+# https://academo.org/demos/3d-surface-plotter/?expression=-3x%5E2-y%5E2&xRange=-50%2C+50&yRange=-50%2C+50&resolution=25
+
+## f(x,y) = -x^2 - y^2
+slopeTable1xy <- slopeTableMain %>%
+  mutate(y = 1:nrow(slopeTableMain)+(x_MIN-1)) %>%
+  mutate(z = ((-1*(x^2))-(y^2)))
+
+## f(x,y) = -3x^2 - y^2
+slopeTable2xy <- slopeTableMain %>%
+  mutate(y = 1:nrow(slopeTableMain)+(x_MIN-1)) %>%
+  mutate(z = ((-3*(x^2))-(1*(y^2))))
+
+## f(x,y) = -x^2 - 3y^2
+slopeTable3xy <- slopeTableMain %>%
+  mutate(y = 1:nrow(slopeTableMain)+(x_MIN-1)) %>%
+  mutate(z = ((-x^2) - (3*(y^2))))
+
+
+## Limits of f(x,y) ----
+
+## f(x,y) = ln(xy)
+f_of_xy <- slopeTableMain %>%
+  mutate(y = x) %>%
+  mutate(z = log(x) * log(y))
+
+## g(x,y) = x^3+x+xy+x^2y-y-y^2/x-y
+g_of_xy <- slopeTableMain %>%
+  mutate(y = x) %>%
+  mutate(z = (x^3)+x+(x*y)+(x^(2*y))-y-(y^2)) %>%
+  mutate(z_divided = z/(x-y))
+
+## h(x,y) = xy/cos(x+y)
+h_of_xy <- slopeTableMain %>%
+  mutate(y = x) %>%
+  mutate(z = (x*y)/cos(x+y))
+
+## k(x,y) = x^2y + y^2x
+k_of_xy <- slopeTableMain %>%
+  mutate(y = x) %>%
+  mutate(z = (((x^2)*y) + ((y^2)*x)))
+
+
+
+
+## Question #5 ----------
+questionFiveTable <- slopeTableMain %>%
+  mutate(y = ((x^2) - (x+30)))
+
+fx4 <-ggplot(data=questionFiveTable, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=y,vjust=1.5)) +
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("Revenue") +
+  xlab("Number of Widgets (in thousands)") +
+  ggtitle("Question #5")
+
+ggplotly(fx4)
+fx4
+
+## m == slope
+questionFiveTable <- questionFiveTable %>%
+  mutate(m = if_else(is.na(lead(y)),0,
+                           (lead(y)-y)/(lead(x)-x),0)) #%>%
+  #mutate(sameSlope = m/x)
+
+
+
+
+## Question #9 ----------
+questionNineTable <- slopeTableMain %>%
+  mutate(y = ((x^2) - (x+30)))
+
+fx5 <-ggplot(data=questionFiveTable, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=y,vjust=1.5)) +
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("Revenue") +
+  xlab("Number of Widgets (in thousands)") +
+  ggtitle("Question #9")
+
+ggplotly(fx5)
+fx5
+
+## m == slope
+questionFiveTable <- questionFiveTable %>%
+  mutate(m = if_else(is.na(lead(y)),0,
+                     (lead(y)-y)/(lead(x)-x),0)) #%>%
+#mutate(sameSlope = m/x)
+
+
+
+
+
+
+## Week 2
+## Derivative single function  -----------
+
+x = -1;
+
+# f(x) = 
+(0.25*(x^4)) - 
+  (5/3*(x^3)) +
+  (x^2) +
+  (8*x) - 
+  4
+
+# rate of change (derivative) at that point
+(4*.25)*(x^3) - 
+  (3*(5/3))*(x^2) + 
+  (2*x) + 
+  8
+
+## Derivative table -----------
+
+## now make a table out of this function
+## looking at the table where x=0 would avoid 
+## polynomial-factoring...
+
+## x-axis continuous values
+x_MIN <- -3
+x_MAX <- 2
+
+## Establish main table
+x_vals <- matrix(c(x_MIN:x_MAX));
+derivativeTableMain <- x_vals;
+colnames(derivativeTableMain) <- "x";
+derivativeTableMain <- as.data.frame(derivativeTableMain);
+derivativeTableMain <- derivativeTableMain %>%
+  mutate(x = as.numeric(x))
+
+# f(x): x^2 - 10x ; f'(x): 2x - 10
+Derivative_Function_Tbl <- derivativeTableMain %>%
+  mutate(y = round((x^5) + (3.5*(x^4)) - (3*(x^3)) - (13*(x^2)) + x + 3,2)) %>%
+  mutate(derivative = round((5*(x^4)) + (14*(x^3)) - (9*(x^2)) - (26*x) + 1,2))
+
+Derivative_Function_Tbl_Zero <- Derivative_Function_Tbl %>%
+  subset(derivative==0)
+
+##
+der_yGraph <-ggplot(data=Derivative_Function_Tbl, aes(x=x, y=y)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=y,vjust=1.5))+
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("f(x)") +
+  ggtitle("Y-Value Graph")
+
+der_yGraph
+
+derGraph <-ggplot(data=Derivative_Function_Tbl, aes(x=x, y=derivative)) +
+  geom_line()+
+  geom_point()+
+  geom_text(aes(label=derivative,vjust=1.5))+
+  scale_x_continuous(breaks = seq(x_MIN,x_MAX,1)) +
+  ylab("f(x)") +
+  ggtitle("Derivative Tbl Graph")
+
+derGraph
+
+
+
+
+
+## Linear Sets of Equations ----
+
+x <- 2
+y <- -1
+z <- 1
+
+linear1 <- ((-2*(x)) + (-1*(y)) + (-1*(z)))
+linear2 <- ((3*(x)) + (1*(y)) + (0*(z)))
+linear3 <- ((3*(x)) + (1*(y)) + (1*(z)))
+
+
+## homework week 3 - question #1
+## answers should be 19, 2, -39
+x <- 4
+y <- 5
+z <- -1
+
+linear1 <- ((1*(x)) + (3*(y)) + (0*(z)))
+linear2 <- ((0*(x)) + (1*(y)) + (3*(z)))
+linear3 <- ((-2*(x)) + (-6*(y)) + (1*(z)))
+
+
+
+
+## Vector Magnitude & Scalar Multiplication ----
+
+## https://onlinemschool.com/math/assistance/vector/length/
+x <- list(c(1,2,4))
+vectorMagnitude <- data.frame(setNames(x, c("v1")))
+vectorMagnitude <- vectorMagnitude %>%
+  mutate(valueSquared = (v1^2)) %>%
+  ## Magnitude of entire vector
+  mutate(magnitude = abs(sqrt(sum(valueSquared))))
+
+## Multiplying single vector by scalar
+x_scalar <- list(c(1,2,3))
+vectorScalar <- data.frame(setNames(x_scalar, c("v1")))
+vectorScalar <- vectorScalar %>%
+  mutate(newVectorSet = (v1*2)) 
+
+## Vector Dot-Product Multiplication (inner product) ----
+
+a <- list(c(1,2))
+vectorDot <- data.frame(setNames(a, c("v1")))
+vectorDot <- vectorDot %>%
+  ## setup second vector
+  mutate(v2 = c(2,-1)) %>%
+  ## dot-product multiplication
+  mutate(productColumn = (v1*v2)) %>%
+  mutate(dotFinalAnswer = sum(productColumn))
+
+vectorDot$dotFinalAnswer
+
+## ...alternatively
+a <- c(1,2)
+b <- c(2,-1)
+a%*%b
+
+
+
+## Vector Cross-Product ----
+
+a <- matrix(c(1,-1,1))
+b <- matrix(c(3,1,-1))
+
+## vector(a) X vector(b) == [(a2b3 - a3b2),(a3b1-a1b3),(a1b2-a2b1)]
+crossProdVector <- (c((a[2,1]*b[3,1])-(a[3,1]*b[2,1]),
+                      (a[3,1]*b[1,1])-(a[1,1]*b[3,1]),
+                      (a[1,1]*b[2,1])-(a[2,1]*b[1,1])))
+
+# a <- matrix(c(7,-4,-9))
+# b <- matrix(c(6,0,-8))
+## answer is vector[32,2,24]
+crossProdVector
+
+
+## Vector Projection ----
+
+## proj sub(a)vector(b) = ((v(a)*v(b))/(abs(v(a)^2))*v(a))
+a <- c(3,2) ## onto...
+b <- c(4,-1) ## projection of...
+
+## dot-product calc as numerator
+projNumerator <- as.numeric((a%*%b))
+## denominator taking absolute value of vector(a)^2
+projDenom <- as.matrix(((abs(a)^2)))
+projDenomSum <- sum(projDenom)
+## absolute value of vector(a) is its magnitude 
+projMagnitude <- abs(sqrt(projDenomSum))
+## divide the numerator by the magnitude of vector(a)
+projScalar <- as.numeric(projNumerator/projMagnitude)
+
+## final numerators (multiple by where vector is going onto)
+projFinalNumerators <- as.vector(a*projNumerator)
+## each over the same projDenomSum number
+## DON'T FORGET TO REDUCE FRACTIONS IF APPLICABLE
+projDenomSum
+
+
+
+## Standard Deviation & Variance ----
+
+X <- c(2,3,3,-1,5,0)
+Y <- list(X)
+Y <- data.frame(setNames(Y, c("dataList")))
+
+## quick method using base-R...
+sd(Y$dataList)
+var(Y$dataList)
+
+## calc var and sd by hand...
+Y_mean <- mean(Y$dataList)
+n <- nrow(Y)
+
+sd_Y <- Y %>%
+  mutate(dataMinusMean = (dataList-Y_mean)) %>%
+  mutate(dataResultSquared = (dataMinusMean^2)) %>%
+  mutate(totalOfSquares = sum(dataResultSquared)) %>%
+  ## SD is sqrt()
+  mutate(SD = sqrt((totalOfSquares/(n-1)))) %>%
+  ## Variance is without sqrt
+  mutate(VAR = (totalOfSquares/(n-1)))
+
+
+## Co-Variance ----
+
+## set the data
+X <- c(0,2,4,6,8)
+Y <- c(-3,4,5,8,11)
+
+## quick base-R method for XX,YY and XY covariance...
+var(X)
+var(Y)
+var(X, Y, na.rm = FALSE)
+
+## list their averages
+XX.mean <- mean(X)
+YY.mean <- mean(Y)
+
+## co-variance table & calculation
+Z <- list(X)
+Z <- data.frame(setNames(Z, c("data1")))
+n <- nrow(Z)
+
+## establishing the XX and YY parts of the matrix
+## |XX  XY|
+## |XY  YY|
+
+Z <- Z %>%
+  mutate(data2 = Y) %>%
+  mutate(XX.MinusMean = (data1-XX.mean)) %>%
+  mutate(YY.MinusMean = (data2-YY.mean)) %>%
+  mutate(XX.ResultSquared = (XX.MinusMean^2)) %>%
+  mutate(YY.ResultSquared = (YY.MinusMean^2)) %>%
+  mutate(XX.Final = (sum(XX.ResultSquared)/(n-1))) %>%
+  mutate(YY.Final = (sum(YY.ResultSquared)/(n-1))) %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean",
+          "XX.ResultSquared","YY.ResultSquared","XX.Final","YY.Final"))
+
+## XX and YY only...
+XX <- Z$XX.Final
+XX <- XX[1:1]
+YY <- Z$YY.Final
+YY <- YY[1:1]
+
+## now to find the XY value (same as the YX value)...
+Z_covXY <- Z %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean")) %>%
+  mutate(multiplyXY = ((data1-XX.mean)*(data2-YY.mean))) %>%
+  mutate(covXY = sum(multiplyXY)/(n-1))
+
+covXY <- as.numeric(Z_covXY$covXY)
+covXY <- covXY[1:1]
+covYX <- covXY
+
+## final matrix...
+finalCoVariances <- matrix(c(XX,covXY,covYX,YY),nrow=2)
+finalCoVariances
+
+
+
+## Co-Variance WK 6 Homework Question #1 ----
+
+## set the data
+X <- c(4,2,-1,1,5)
+Y <- c(2,3,3,5,6)
+
+## list their averages
+XX.mean <- mean(X)
+YY.mean <- mean(Y)
+
+## co-variance table & calculation
+Z <- list(X)
+Z <- data.frame(setNames(Z, c("data1")))
+n <- nrow(Z)
+
+## establishing the XX and YY parts of the matrix
+## |XX  XY|
+## |XY  YY|
+
+Z <- Z %>%
+  mutate(data2 = Y) %>%
+  mutate(XX.MinusMean = (data1-XX.mean)) %>%
+  mutate(YY.MinusMean = (data2-YY.mean)) %>%
+  mutate(XX.ResultSquared = (XX.MinusMean^2)) %>%
+  mutate(YY.ResultSquared = (YY.MinusMean^2)) %>%
+  mutate(XX.Final = (sum(XX.ResultSquared)/(n-1))) %>%
+  mutate(YY.Final = (sum(YY.ResultSquared)/(n-1))) %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean",
+           "XX.ResultSquared","YY.ResultSquared","XX.Final","YY.Final"))
+
+## XX and YY only...
+XX <- Z$XX.Final
+XX <- XX[1:1]
+YY <- Z$YY.Final
+YY <- YY[1:1]
+
+## now to find the XY value (same as the YX value)...
+Z_covXY <- Z %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean")) %>%
+  mutate(multiplyXY = ((data1-XX.mean)*(data2-YY.mean))) %>%
+  mutate(covXY = sum(multiplyXY)/(n-1))
+
+covXY <- as.numeric(Z_covXY$covXY)
+covXY <- covXY[1:1]
+covYX <- covXY
+
+## final matrix...
+finalCoVariances <- matrix(c(XX,covXY,covYX,YY),nrow=2)
+finalCoVariances
+
+
+
+
+## Co-Variance WK 6 Homework Question #3 ----
+
+# http://ci.columbia.edu/ci/premba_test/c0331/s7/s7_5.html
+# https://stats.stackexchange.com/questions/29713/what-is-covariance-in-plain-language
+
+## set the data
+covSet1 <- c(2.3,2.5,1,2.4,2.1)
+covSet2 <- c(4.6,5,2,4.8,4.2)
+var(covSet1, covSet2, na.rm = FALSE)
+
+
+#var(covSet1)
+#var(covSet2)
+
+
+## Correlation Coefficient (for fun) ------
+
+covSet1 <- c(2.3,2.5,1,2.4,2.1)
+covSet2 <- c(4.6,5,2,4.8,4.2)
+
+var(covSet1, covSet2, na.rm = FALSE) /
+  (sd(covSet1)*sd(covSet2))
+
+
+## Principle Component Analysis (PCA) ----
+
+## 1. set the data
+X <- c(64,65,66,67,68,69,70,71,72,73)
+Y <- c(120,129,146,157,171,187,186,199,214,229)
+
+## quick base-R method for XX,YY and XY covariance...
+var(X)
+var(Y)
+var(X, Y, na.rm = FALSE)
+
+## 2. list their averages
+XX.mean <- mean(X)
+YY.mean <- mean(Y)
+
+## table setup
+Z <- list(X)
+Z <- data.frame(setNames(Z, c("data1")))
+n <- nrow(Z)
+
+## 3. establishing the XX and YY parts of the matrix
+## |XX  XY|
+## |XY  YY|
+
+Z <- Z %>%
+  mutate(data2 = Y) %>%
+  mutate(XX.MinusMean = (data1-XX.mean)) %>%
+  mutate(YY.MinusMean = (data2-YY.mean)) %>%
+  mutate(XX.ResultSquared = (XX.MinusMean^2)) %>%
+  mutate(YY.ResultSquared = (YY.MinusMean^2)) %>%
+  mutate(XX.Final = (sum(XX.ResultSquared)/(n-1))) %>%
+  mutate(YY.Final = (sum(YY.ResultSquared)/(n-1))) %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean",
+           "XX.ResultSquared","YY.ResultSquared","XX.Final","YY.Final"))
+
+## XX and YY only...
+XX <- Z$XX.Final
+XX <- XX[1:1]
+YY <- Z$YY.Final
+YY <- YY[1:1]
+
+## now to find the XY value (same as the YX value)...
+Z_covXY <- Z %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean")) %>%
+  mutate(multiplyXY = ((data1-XX.mean)*(data2-YY.mean))) %>%
+  mutate(covXY = sum(multiplyXY)/(n-1))
+
+covXY <- as.numeric(Z_covXY$covXY)
+covXY <- covXY[1:1]
+covYX <- covXY
+
+## final covariance matrix...
+finalCoVariances <- matrix(c(XX,covXY,covYX,YY),nrow=2)
+finalCoVariances
+
+## 4. Find eigenvectors and eigenvalues
+## https://matrixcalc.org/en/vectors.html#eigenvectors%28%7B%7B33/4,108%7D,%7B108,28964/25%7D%7D%29
+
+## 5. Sort by largest eigenvector/value to get principle components
+
+
+## PCA Homework Question #4 ----
+
+## 1. set the data
+X <- c(2.0,1.8,1.5,1.2,1.0,0.8,0.5,0.2) #miles
+Y <- c(19,21,30,54,61,82,83,102) #income in thousands
+
+## quick base-R method for XX,YY and XY covariance...
+var(X)
+var(Y)
+var(X, Y, na.rm = FALSE)
+
+## 2. list their averages
+XX.mean <- mean(X)
+YY.mean <- mean(Y)
+
+## table setup
+Z <- list(X)
+Z <- data.frame(setNames(Z, c("data1")))
+n <- nrow(Z)
+
+## 3. establishing the XX and YY parts of the matrix
+## |XX  XY|
+## |XY  YY|
+
+Z <- Z %>%
+  mutate(data2 = Y) %>%
+  mutate(XX.MinusMean = (data1-XX.mean)) %>%
+  mutate(YY.MinusMean = (data2-YY.mean)) %>%
+  mutate(XX.ResultSquared = (XX.MinusMean^2)) %>%
+  mutate(YY.ResultSquared = (YY.MinusMean^2)) %>%
+  mutate(XX.Final = (sum(XX.ResultSquared)/(n-1))) %>%
+  mutate(YY.Final = (sum(YY.ResultSquared)/(n-1))) %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean",
+           "XX.ResultSquared","YY.ResultSquared","XX.Final","YY.Final"))
+
+## XX and YY only...
+XX <- Z$XX.Final
+XX <- XX[1:1]
+YY <- Z$YY.Final
+YY <- YY[1:1]
+
+## now to find the XY value (same as the YX value)...
+Z_covXY <- Z %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean")) %>%
+  mutate(multiplyXY = ((data1-XX.mean)*(data2-YY.mean))) %>%
+  mutate(covXY = sum(multiplyXY)/(n-1))
+
+covXY <- as.numeric(Z_covXY$covXY)
+covXY <- covXY[1:1]
+covYX <- covXY
+
+## final covariance matrix...
+finalCoVariances <- matrix(c(XX,covXY,covYX,YY),nrow=2)
+finalCoVariances
+
+## 4. Find eigenvectors and eigenvalues
+## https://www.dcode.fr/matrix-eigenvectors
+## https://www.arndt-bruenner.de/mathe/scripts/engl_eigenwert2.htm
+
+## 5. Sort by largest eigenvector/value to get principle components
+
+
+
+
+## PCA Final Question #2 ----
+
+## 1. set the data
+X <- c(1,5,7,9,4,11,13,5,4) #murders
+Y <- c(4,11,12,24,7,22,29,12,7) #ice cream cones
+
+## quick base-R method for XX,YY and XY covariance...
+var(X)
+var(Y)
+var(X, Y, na.rm = FALSE)
+
+## 2. list their averages
+XX.mean <- mean(X)
+YY.mean <- mean(Y)
+
+## table setup
+Z <- list(X)
+Z <- data.frame(setNames(Z, c("data1")))
+n <- nrow(Z)
+
+## 3. establishing the XX and YY parts of the matrix
+## |XX  XY|
+## |XY  YY|
+
+Z <- Z %>%
+  mutate(data2 = Y) %>%
+  mutate(XX.MinusMean = (data1-XX.mean)) %>%
+  mutate(YY.MinusMean = (data2-YY.mean)) %>%
+  mutate(XX.ResultSquared = (XX.MinusMean^2)) %>%
+  mutate(YY.ResultSquared = (YY.MinusMean^2)) %>%
+  mutate(XX.Final = (sum(XX.ResultSquared)/(n-1))) %>%
+  mutate(YY.Final = (sum(YY.ResultSquared)/(n-1))) %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean",
+           "XX.ResultSquared","YY.ResultSquared","XX.Final","YY.Final"))
+
+## XX and YY only...
+XX <- Z$XX.Final
+XX <- XX[1:1]
+YY <- Z$YY.Final
+YY <- YY[1:1]
+
+## now to find the XY value (same as the YX value)...
+Z_covXY <- Z %>%
+  select(c("data1","XX.MinusMean","data2","YY.MinusMean")) %>%
+  mutate(multiplyXY = ((data1-XX.mean)*(data2-YY.mean))) %>%
+  mutate(covXY = sum(multiplyXY)/(n-1))
+
+covXY <- as.numeric(Z_covXY$covXY)
+covXY <- covXY[1:1]
+covYX <- covXY
+
+## final covariance matrix...
+finalCoVariances <- matrix(c(XX,covXY,covYX,YY),nrow=2)
+finalCoVariances
+
+## 4. Find eigenvectors and eigenvalues
+## https://www.dcode.fr/matrix-eigenvectors
+## https://www.arndt-bruenner.de/mathe/scripts/engl_eigenwert2.htm
+
+## 5. Sort by largest eigenvector/value to get principle components
+
+
+
+
+
+## Finding a vector between two points in 3D ----
+
+## set the point vectors
+a <- c(2,3,1)
+b <- c(-1,2,2)
+
+## direction vector
+d_Vector <- b-a
+
+## set scalar t to something
+t <- 1
+
+## L(t) = vector(a) + t(d_Vector)
+Lt <- a + t*(d_Vector)
+
+## table with scalar impact
+vectorPointTable <- matrix(a,nrow=1)
+vectorPointTable <- t(vectorPointTable)
+vectorPointTable <- as.data.frame(vectorPointTable)
+
+vectorPointTable <- vectorPointTable %>%
+  mutate(a = V1) %>%
+  mutate(V1 = NULL) %>%
+  mutate(dVector = d_Vector) %>%
+  mutate(Lt1 = a+(1*dVector)) %>%
+  mutate(Lt2 = a+(2*dVector)) %>%
+  mutate(Lt3 = a+(3*dVector)) %>%
+  mutate(Lt4 = a+(4*dVector)) %>%
+  mutate(Lt5 = a+(5*dVector)) %>%
+  mutate(Lt6 = a+(6*dVector))
+  
+
+
+
+
+## Finding a plane through a point in 3D ----
+
+## scalar
+t <- 2
+
+## any given point on the plane
+p <- matrix(c(1,-1,1))
+
+## direction vector
+d_Vector <- matrix(p + (t*c(1,1,-1)))
+
+## Cross-product to find normal vector
+## Formula: vector(a) X vector(b) == [(a2b3 - a3b2),(a3b1-a1b3),(a1b2-a2b1)]
+crossProdVector <- (c((p[2,1]*d_Vector[3,1])-(p[3,1]*d_Vector[2,1]),
+                      (p[3,1]*d_Vector[1,1])-(p[1,1]*d_Vector[3,1]),
+                      (p[1,1]*d_Vector[2,1])-(p[2,1]*d_Vector[1,1])))
+
+
+
+
+
+## Finding the partial gradient/derivative ----
+
+## x-axis 
+x_MIN <- -10
+x_MAX <- 10
+
+## Establish main table
+x_vals <- matrix(c(x_MIN:x_MAX));
+derivativeTableMain <- x_vals;
+colnames(derivativeTableMain) <- "x";
+derivativeTableMain <- as.data.frame(derivativeTableMain);
+derivativeTableMain <- derivativeTableMain %>%
+  mutate(x = as.numeric(x))
+
+## grade f(x,y) = x^2 * y
+derivativeTableMain <- derivativeTableMain %>%
+  mutate(y = x) %>%
+  mutate(gradient_x = ((2*x)*y)) %>%
+  mutate(gradient_y = ((x^2)))
+
+## using the numDeriv package...
+gradeFormula <- function(grade) {grade[1]^2*grade[2]}
+
+## calculate
+grad(gradeFormula, c(3,2))
+
+## EXAMPLE #2
+## grade f(x,y) = x^2 * y^3
+derivativeTableMain <- derivativeTableMain %>%
+  mutate(y = x-1) %>%
+  ## first do the derivative of x while y stays the same
+  mutate(gradient_x = ((2*x)*(y^3))) %>%
+  ## then do the derivative of y while x stays the same
+  mutate(gradient_y = ((x^2)*(3*(y^2))))
+
+## using the numDeriv package...
+gradeFormula <- function(grade) {grade[1]^2*grade[2]^3}
+
+## calculate
+grad(gradeFormula, c(3,2))
+
+
+
+
+##  ----------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
