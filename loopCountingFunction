@@ -1,0 +1,16 @@
+## top 20 10-day RC function; clipping the top 20 rows only
+seqCount <- function(x) {
+  if_else(is.na(lag(x$Count)),x$Count,lag(x$Count+1))
+}
+
+for(i in 1:nrow(Daily_10_Day_RCs)) {
+  Daily_Summary$Count <- seqCount(Daily_Summary)
+}
+
+Daily_Summary <- Daily_Summary %>%
+  subset(Count<=20)
+  
+  
+  
+  
+  
